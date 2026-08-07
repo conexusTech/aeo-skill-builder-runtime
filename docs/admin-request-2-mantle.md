@@ -1,6 +1,10 @@
-# Admin request #2 — add one statement to an existing role
+# Admin request #2 — one IAM statement + enable Claude Sonnet 5
 
 **Account:** `082585646836` · **Region:** `us-east-1` · **Requested by:** Leo Lindo
+
+**Two parts, both needed, both in this document.** Part 1 is an IAM statement on an
+existing role. Part 2 is enabling the model on the account. Neither works without the
+other, so please do them together.
 
 > ✅ **Request #1 is DONE — nothing to redo.** You created
 > `AmazonBedrockAgentCoreAEOSkillBuilderRole` earlier today, exactly as asked, and it
@@ -9,7 +13,7 @@
 >
 > **This is a separate, smaller ask: one additional statement on that same role.**
 
-## What is needed
+## Part 1 — the IAM statement
 
 Add permission for the **`bedrock-mantle`** service to the existing inline policy
 `AEOSkillBuilderRuntimePolicy`:
@@ -173,11 +177,46 @@ exactly as they are, for the same reasons as request #1.
 We can read the role (`iam:GetRolePolicy` is granted), so we will verify it ourselves
 and redeploy. A one-line "done" is enough.
 
-## Possibly related, if it is easy while you are there
+## 🔴 Part 2 — the IAM statement alone will NOT be enough. Please do this too.
 
-Bedrock model access on this account may also need the **Anthropic use-case details
-form** on the Bedrock "Model access" console page, plus a marketplace subscription for
-`anthropic.claude-sonnet-5`. **We are no longer sure this is required** — we have never
-gotten far enough to hit it, because every attempt so far failed earlier, first in our
-own dependencies and now in IAM. Mentioning it only so it is on your radar; please do
-not treat it as a blocker on our word.
+We probed this directly after writing the section above, and it upgraded from "possibly
+related" to "certainly required". Please treat both parts as one request.
+
+**Claude Sonnet 5 is not enabled on this account.** It is *listed*
+(`aws bedrock list-foundation-models` returns `anthropic.claude-sonnet-5`), but there is
+no active subscription. Invoked as `user/leo.lindo`, 3 attempts per path, all failed
+identically:
+
+```
+Mantle:          "Your subscription to the model could not be established. Reason:
+                  User: …user/leo.lindo is not authorized to perform:
+                  aws-marketplace:Subscribe on resource: *"
+
+bedrock-runtime: "Model access is denied … not authorized to perform the required AWS
+                  Marketplace actions (aws-marketplace:ViewSubscriptions,
+                  aws-marketplace:Subscribe)"
+```
+
+**The Mantle client attempts to subscribe on demand, at call time.** That is the part
+that matters for the role: once `bedrock-mantle:*` is granted, the runtime's role will
+reach exactly this same point and fail the same way — unless a subscription already
+exists.
+
+**Two things needed, and we are explicitly NOT asking for `Subscribe` on the role:**
+
+1. **The Anthropic use-case details form**, on the Bedrock → "Model access" console
+   page. Confirmed never submitted for this account
+   (`aws bedrock get-use-case-for-model-access` → *"You have not filled out the request
+   form."*). It gates the subscription, so it comes first.
+2. **Subscribe the account to `anthropic.claude-sonnet-5`** once, in the console.
+
+**Why account-level rather than granting the role `aws-marketplace:Subscribe`:** that
+action cannot be scoped to a single model — the error shows it evaluated on
+`resource: *` — so granting it would let our runtime subscribe the account to *any*
+marketplace product, and bill for it. A one-time subscription by you removes the need
+for any principal to hold it. If the role turns out to still need
+`aws-marketplace:ViewSubscriptions` (read-only) afterwards, we will come back for that
+one narrow action.
+
+**Order matters:** form → subscribe → then the `bedrock-mantle` statement is what makes
+it usable. All three can be done in one sitting.
