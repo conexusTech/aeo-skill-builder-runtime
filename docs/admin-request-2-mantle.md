@@ -175,47 +175,71 @@ exactly as they are, for the same reasons as request #1.
 
 ## 🔴 Part 2 — the IAM statement alone will NOT be enough. Please do this too.
 
-We probed this directly after writing the section above, and it upgraded from "possibly
-related" to "certainly required". Please treat both parts as one request.
+**If you have already been asked to enable Claude Sonnet 5, this section says exactly
+what is still outstanding and how to confirm it — please read it rather than skipping
+as done.** As of 2026-08-07 it is not yet in place.
 
-**Claude Sonnet 5 is not enabled on this account.** It is *listed*
-(`aws bedrock list-foundation-models` returns `anthropic.claude-sonnet-5`), but there is
-no active subscription. Invoked as `user/leo.lindo`, 3 attempts per path, all failed
-identically:
+**The authoritative check, which anyone can run:**
 
+```bash
+aws bedrock get-foundation-model-availability \
+  --region us-east-1 --model-id anthropic.claude-sonnet-5
 ```
-Mantle:          "Your subscription to the model could not be established. Reason:
-                  User: …user/leo.lindo is not authorized to perform:
-                  aws-marketplace:Subscribe on resource: *"
 
-bedrock-runtime: "Model access is denied … not authorized to perform the required AWS
-                  Marketplace actions (aws-marketplace:ViewSubscriptions,
-                  aws-marketplace:Subscribe)"
+Today it returns:
+
+```json
+{
+  "modelId": "anthropic.claude-sonnet-5",
+  "agreementAvailability": { "status": "NOT_AVAILABLE" },   ← THE ONE THAT MATTERS
+  "authorizationStatus": "AUTHORIZED",
+  "entitlementAvailability": "AVAILABLE",
+  "regionAvailability": "AVAILABLE"
+}
 ```
+
+**Three of the four are already green.** The region offers the model, the account is
+entitled to it, and authorization is in place. **The only gap is
+`agreementAvailability: NOT_AVAILABLE` — the AWS Marketplace agreement, i.e. the
+subscription itself.**
+
+✅ **Done means that field reads `AVAILABLE`.** That is the single check to run
+afterwards; please do not rely on the console appearing to have accepted something.
+
+**On the Anthropic use-case form — needed only if the console asks.** We report it
+because `aws bedrock get-use-case-for-model-access` says *"You have not filled out the
+request form"*, but `authorizationStatus` is already `AUTHORIZED`, so the two signals
+disagree and we cannot tell from outside whether the form is a hard prerequisite here.
+Treat the subscription as the goal and the form as a step only if the console blocks on
+it.
+
+**Why our own invocations cannot answer this**, in case they get quoted at you:
+`user/leo.lindo` holds neither `aws-marketplace:Subscribe` nor `ViewSubscriptions`, so
+every attempt returns a permissions error that looks the same whether a subscription
+exists or not. The availability API above is the only reliable signal we have.
 
 **The Mantle client attempts to subscribe on demand, at call time.** That is the part
 that matters for the role: once `bedrock-mantle:*` is granted, the runtime's role will
 reach exactly this same point and fail the same way — unless a subscription already
 exists.
 
-**Two things needed, and we are explicitly NOT asking for `Subscribe` on the role:**
+**What we are asking for: subscribe the account to `anthropic.claude-sonnet-5` once,
+in the Bedrock / Marketplace console.** Nothing else in Part 2.
 
-1. **The Anthropic use-case details form**, on the Bedrock → "Model access" console
-   page. Confirmed never submitted for this account
-   (`aws bedrock get-use-case-for-model-access` → *"You have not filled out the request
-   form."*). It gates the subscription, so it comes first.
-2. **Subscribe the account to `anthropic.claude-sonnet-5`** once, in the console.
+**And explicitly NOT `aws-marketplace:Subscribe` on the role.** That action cannot be
+scoped to a single model — the denial evaluates it on `resource: *` — so granting it
+would let our runtime subscribe the account to *any* marketplace product and bill for
+it. A one-time subscription by you removes the need for any principal to hold it.
 
-**Why account-level rather than granting the role `aws-marketplace:Subscribe`:** that
-action cannot be scoped to a single model — the error shows it evaluated on
-`resource: *` — so granting it would let our runtime subscribe the account to *any*
-marketplace product, and bill for it. A one-time subscription by you removes the need
-for any principal to hold it. If the role turns out to still need
-`aws-marketplace:ViewSubscriptions` (read-only) afterwards, we will come back for that
-one narrow action.
+**Why the role still needs Part 1 even after you subscribe:** the Anthropic SDK's Mantle
+client establishes its subscription at call time, so it is the caller that gets denied.
+Once the agreement exists account-wide there is nothing left to establish, and the
+`bedrock-mantle:*` statement is what lets the runtime actually issue the inference. If
+it turns out to also need read-only `aws-marketplace:ViewSubscriptions`, we will come
+back for that one narrow action rather than pre-emptively asking for it.
 
-**Order matters:** form → subscribe → then the `bedrock-mantle` statement is what makes
-it usable. All three can be done in one sitting.
+**Order:** subscribe first, then Part 1 — but both in one sitting is fine, since neither
+is usable without the other.
 
 ## Nothing to send back
 
