@@ -1,0 +1,279 @@
+"""Seven-layer prompt composition (PRD §9)."""
+
+from app.skill_builder import contracts
+from app.skill_builder.context import CONTEXT_FENCE_OPEN, CustomerContext
+from app.skill_builder.prompt import compose
+
+
+def _compose():
+    ctx = CustomerContext({"organization_name": "ACME", "vertical": "auto parts"})
+    return compose(customer_context=ctx, task="Propose the geography section.",
+                   tools=contracts.tool_schemas(),
+                   context_field_keys=contracts.context_field_keys(),
+                   config_positions=contracts.config_positions(),
+                   runtime_populated=contracts.runtime_populated_positions(),
+        config_schema=contracts.config_schema())
+
+
+def test_layers_are_in_stable_to_volatile_order():
+    comp = _compose()
+    assert comp.layer_names() == [
+        "Platform baseline",
+        "Customer context",
+        "Agent identity",
+        "Context-field bindings",
+        "Section shapes",
+        "Task",
+        "Tools",
+    ]
+
+
+def test_baseline_contains_injection_guardrail():
+    rendered = _compose().render()
+    # The guardrail must name the fence and forbid obeying data-as-instructions.
+    assert CONTEXT_FENCE_OPEN in rendered
+    assert "untrusted" in rendered.lower()
+    assert "never" in rendered.lower() or "not act on it" in rendered.lower()
+
+
+def test_customer_context_is_fenced_in_the_prompt():
+    rendered = _compose().render()
+    assert "ACME" in rendered
+    assert rendered.count(CONTEXT_FENCE_OPEN) >= 1
+
+
+def test_task_and_tools_layers_present():
+    rendered = _compose().render()
+    assert "Propose the geography section." in rendered
+    assert "request_test_run" in rendered
+    assert "request_finalize" in rendered
+
+
+def test_identity_states_vertical_not_org_invariant():
+    rendered = _compose().render()
+    assert "VERTICAL" in rendered
+    assert "context-field key" in rendered
+
+
+def test_split_separates_stable_prefix_from_volatile_suffix():
+    stable, volatile = _compose().split()
+    # Cacheable stable prefix: baseline + context + identity + bindings + shapes.
+    # Both contract-derived layers must land here, or every turn re-sends the key
+    # vocabulary and every section shape -- the opposite of the cost lever.
+    assert "Platform baseline" in stable
+    assert "Customer context" in stable
+    assert "Agent identity" in stable
+    assert "Context-field bindings" in stable
+    assert "Section shapes" in stable
+    assert "Section shapes" not in volatile
+    # Volatile suffix: the per-turn task + tool schemas.
+    assert "Propose the geography section." in volatile
+    assert "request_test_run" in volatile
+    # No overlap.
+    assert "Platform baseline" not in volatile
+    assert "request_test_run" not in stable
+
+
+def test_bindings_layer_gives_the_syntax_and_the_closed_key_list():
+    """R12: stating the rule without the vocabulary is not actionable.
+
+    The identity layer says "reference a well-known context-field key"; without
+    the keys the model must invent them, and the gateway rejects an unknown key
+    HARD. That failure is invisible to config validation — section internals are
+    `additionalProperties: true`, so a wrong binding passes the schema and fails
+    only at test-run/finalize.
+    """
+    rendered = _compose().render()
+    # Exact binding shape, not just the concept.
+    assert '{"context_ref": "home_markets"}' in rendered
+    # A literal is legal only as a `default` sibling.
+    assert '"default"' in rendered
+    # The closed vocabulary must actually be enumerated.
+    for key in contracts.context_field_keys():
+        assert key in rendered, f"{key} missing from the prompt"
+    # Unprefixed is the canonical form and the prompt must say so.
+    assert "customer.home_markets" in rendered  # named as the WRONG form
+    assert "closed" in rendered.lower()
+
+
+def test_bindings_layer_key_order_is_deterministic():
+    """The layer sits in the CACHED prefix, so it must be byte-stable.
+
+    `frozenset` iteration order varies between processes under string hash
+    randomisation. Emitting keys in set order would make the "stable" prefix
+    differ per invocation and the prompt cache would silently never hit — a cost
+    lever that appears to be working.
+    """
+    keys = frozenset({"home_markets", "disqualifiers", "competitors", "industry"})
+    ctx = CustomerContext({"organization_name": "ACME"})
+    renders = {
+        compose(customer_context=ctx, task="t", tools={},
+                context_field_keys=keys,
+                config_positions=contracts.config_positions(),
+                runtime_populated=contracts.runtime_populated_positions(),
+        config_schema=contracts.config_schema()).render()
+        for _ in range(5)
+    }
+    assert len(renders) == 1
+    # Assert on the enumerated bullet lines, not raw substring positions: the
+    # layer's worked examples also mention key names, so `index()` would find the
+    # example rather than the list entry.
+    rendered = renders.pop()
+    # The layer now carries THREE bullet lists: the closed key vocabulary, the
+    # enforced config positions, and the runtime-populated positions nobody may
+    # author. Partition on "is this bullet a bare key" rather than on any one
+    # punctuation mark -- the arrow-based split broke the moment a third list
+    # arrived using a different separator, and widening the assertion instead
+    # would have stopped checking key ORDER, which is the whole point here.
+    bullets = [
+        line.strip()[2:]
+        for line in rendered.splitlines()
+        if line.startswith("  - ")
+    ]
+    key_bullets = [b for b in bullets if " " not in b]  # keys are bare identifiers
+    annotated = [b for b in bullets if " " in b]
+    assert key_bullets == sorted(keys)
+    # Positions and forbidden entries come from JSON arrays, so published order IS
+    # the stable order -- and the set-of-renders assertion above already proves the
+    # byte-stability guarantee covers them too.
+    assert any("→" in b for b in annotated), "config positions must be enumerated"
+    assert any("runtime fills it" in b for b in annotated), (
+        "runtime-populated positions must be enumerated"
+    )
+    assert len(renders) == 0
+
+
+# --- the shapes layer is DERIVED from the schema (2026-08-05) ----------------
+
+
+def test_section_shapes_are_derived_not_transcribed():
+    """The whole point of deriving: a shape the schema declares cannot disagree
+    with what we teach, and a shape it stops declaring stops being taught.
+
+    Replaced a hand-maintained constant whose transcription was wrong in two
+    places — the position that produced six defects across this feature.
+    """
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    schema = contracts.config_schema()
+    rendered = _section_shapes_layer(schema)
+    # Every declared internal of every shaped section must appear.
+    for section in ("geography", "discovery", "validation", "contacts"):
+        for key in schema["properties"][section]["properties"]:
+            assert key in rendered, f"{section}.{key} missing from the prompt"
+
+
+def test_a_schema_only_shape_appears_without_touching_this_module():
+    """Drift-proofing, asserted rather than claimed: inject a new section key into
+    a copy of the schema and it must be taught with no code change here."""
+    import copy
+
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    schema = copy.deepcopy(contracts.config_schema())
+    schema["properties"]["contacts"]["properties"]["invented_later"] = {
+        "type": "string", "description": "A key nobody has written code for.",
+    }
+    rendered = _section_shapes_layer(schema)
+    assert "invented_later" in rendered
+    assert "A key nobody has written code for." in rendered
+
+
+def test_nested_definitions_expand_one_level_and_no_further():
+    """`targeting` renders as a bare 'object' without the nested pass, losing that
+    `use_zip_discovery` falsy means SKIP. Bounded at one level so this stays a
+    renderer rather than becoming a second jsonschema."""
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    rendered = _section_shapes_layer(contracts.config_schema())
+    assert "use_zip_discovery" in rendered
+    assert "FALSY MEANS SKIP" in rendered
+
+
+def test_a_direct_context_ref_property_is_not_re_expanded():
+    """Exercises the `context_ref in props` guard, which the real schema does NOT
+    reach — `boundStringList` is an `anyOf`, so it has no `properties` and returns
+    early for an unrelated reason.
+
+    Found by mutation: removing the guard changed nothing, and the assertion that
+    looked like it covered it was passing on the `anyOf` path. So the guard is
+    tested against a schema that actually triggers it, or it is not tested at all.
+    A binding is explained once by the bindings layer; re-explaining `context_ref`
+    per property would bury the shapes explained nowhere else.
+    """
+    import copy
+
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    schema = copy.deepcopy(contracts.config_schema())
+    schema["properties"]["contacts"]["properties"]["bound_directly"] = {
+        "$ref": "#/$defs/contextRef"
+    }
+    rendered = _section_shapes_layer(schema)
+    assert "bound_directly" in rendered
+    assert "Well-known org context-field key" not in rendered
+
+
+def test_scoring_is_named_as_unspecified_rather_than_omitted():
+    """Its internals were never ratified. Omitting the section would read as "do
+    not author it", and a config with no scoring ranks nothing — so a caller
+    reading a top-N slice gets an arbitrary one."""
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    rendered = _section_shapes_layer(contracts.config_schema())
+    assert "scoring" in rendered
+    assert "not yet specified" in rendered
+
+
+# --- renderer robustness, from the 2026-08-05 audit pass ---------------------
+
+
+def test_odd_schema_nodes_are_skipped_not_raised():
+    """This renderer runs inside compose() on EVERY turn, and the schema is
+    swappable — so an AttributeError here is a dead conversation surfaced as an
+    opaque RUN_ERROR, not a worse prompt. `true` is a legal subschema, `$defs`
+    could be malformed, a description need not be a string. Each of these raised
+    before the audit."""
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    real = contracts.config_schema()
+    for label, mutate in {
+        "section is not an object": lambda s: s["properties"].__setitem__("geography", True),
+        "property is `true`": lambda s: s["properties"]["contacts"]["properties"]
+            .__setitem__("titles", True),
+        "properties is a list": lambda s: s["properties"]["contacts"]
+            .__setitem__("properties", ["titles"]),
+        "description is not a string": lambda s: s["properties"]["contacts"]["properties"]
+            .__setitem__("seniorities", {"description": ["a"]}),
+        "$defs is not a dict": lambda s: s.__setitem__("$defs", []),
+        "self-referential $ref": lambda s: s.__setitem__(
+            "$defs", {"loop": {"type": "object",
+                               "properties": {"again": {"$ref": "#/$defs/loop"}}}}),
+    }.items():
+        import copy
+
+        schema = copy.deepcopy(real)
+        mutate(schema)
+        # Must not raise. Content is best-effort; survival is the contract.
+        _section_shapes_layer(schema)
+
+
+def test_a_schema_declaring_no_section_internals_raises():
+    """Tolerating an odd node is right; tolerating an empty vocabulary is not.
+
+    With nothing declared the layer renders "internals not yet specified" five
+    times, which reads as permission to invent — and inventing section internals
+    is exactly what this layer exists to stop, since the scanner accepts
+    unrecognised keys and then does nothing. Same rule as an empty key list.
+    """
+    import copy
+
+    import pytest
+
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    schema = copy.deepcopy(contracts.config_schema())
+    for section in ("geography", "discovery", "validation", "contacts", "scoring"):
+        schema["properties"].pop(section, None)
+    with pytest.raises(ValueError, match="declares no section internals"):
+        _section_shapes_layer(schema)

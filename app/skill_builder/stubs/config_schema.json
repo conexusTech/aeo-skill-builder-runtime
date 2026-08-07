@@ -1,0 +1,221 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://conqrse.dev/schemas/skill-builder-config/v1.json",
+  "title": "Skill Builder Config (v1 — RATIFIED 2026-08-03)",
+  "description": "Versioned contract for the skill config the Conversational Skill Builder agent emits and the generic prospect-scanner runtime executes. PRD R7. Owned by aeo-backend (enforced at STATE_DELTA persist / test-run start / finalize); the agent-service builder + skills-service scanner consume a version-pinned copy. This v1 locks the ENVELOPE + cross-cutting invariants (version, catalog metadata, run_parameters, pipeline stages, org-agnostic context refs) and stays permissive INSIDE each domain section (additionalProperties:true) so domain internals can be co-designed with the runtime workstream without a schema round-trip. VOCABULARY (ruled 2026-08-03, see $comment): 'section' = authoring unit, 'phase' = runtime execution unit. Never use 'phase' for the five authoring sections.",
+  "$comment_partial_drafts": "OMIT WHAT YOU DON'T KNOW YET — NEVER PLACEHOLDER IT. Structural/incremental mode drops top-level `required` so a half-built draft persists fine, but `const`, `enum` and type constraints are PROPERTY constraints and still apply from the first STATE_SNAPSHOT. That is deliberate, not an oversight: relaxing them would leave structural mode validating essentially nothing, and a placeholder that passes validation is worse than an absent field, because it reaches finalize looking legitimate. So a mid-conversation draft should carry `version: \"1.0\"` (known immediately), omit `type` until the skill type is actually decided, and omit any section not yet proposed — rather than emitting `type: \"prospect-scanner\"` or a draft version string. Flagged by aeo-agent-service 2026-08-03, whose skeleton did exactly that and would therefore have been rejected on turn one at the STATE_DELTA persist point rather than at the finalize gate where it would have been noticed in testing.",
+  "$comment": "SECTION vs PHASE — the one naming rule in this contract. A **section** is an AUTHORING unit: one of the five fixed conversation steps (geography, discovery, validation, contacts, scoring) that the builder chat proposes and the user accepts individually, and that STATE_DELTA JSON pointers address. A **phase** is a RUNTIME EXECUTION unit: an ordered scanner step id in `execution_phases`, whose subsets drive reduced test runs (R6). They are different cardinalities, different lifecycles and different owners, and all three repos had independently used the word 'phase' for both — aeo-frontend and aeo-agent-service for the five authoring sections, this schema for the execution ids. Ruled 2026-08-03: the field formerly named `phases` is now `execution_phases`; the five authoring sections keep their existing top-level key names so neither sibling has to change emitted paths or STATE_DELTA pointers. Do not reintroduce a top-level `phases`.",
+  "type": "object",
+  "required": ["version", "type", "run_parameters"],
+  "properties": {
+    "version": {
+      "description": "Schema CONTRACT version — not the draft's own revision. It is `1.0` from the very first STATE_SNAPSHOT of a brand-new draft, because it identifies which contract the document speaks, and that is known before any content is. Do not put a draft/authoring version here (e.g. `0.1.0-draft`); there is no field for one, and `const` means it fails even in structural mode.",
+      "const": "1.0"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "description": "Catalog display name."
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "maxLength": 100,
+      "description": "Catalog slug. Convention: <vertical>-prospect-scanner (Q2). Distinct from runtime_slug (dispatch pointer)."
+    },
+    "type": {
+      "enum": ["customer", "project"],
+      "description": "Skill type — mirrors skills.type. This IS R13's `skill_type` match dimension; it is not a separate field. Do not emit a `skill_type` key."
+    },
+    "product_description": {
+      "type": ["string", "null"],
+      "description": "snake_case, like every key in this contract. `productDescription` is NOT accepted — see the root $comment on casing."
+    },
+    "vertical": {
+      "type": "string",
+      "description": "R13 match dimension 1 of 3. Vertical/industry tag powering library-first catalog match. Curated taxonomy still pending an owner (Q8), so no enum yet — a free string today."
+    },
+    "lead_type": {
+      "enum": ["A", "B", "MIXED"],
+      "description": "R13 match dimension 2 of 3. Mirrors the `organization_lead_type_enum` / `organizations.lead_type` vocabulary exactly — uppercase, `MIXED` not `mixed`. Declared 2026-08-03: aeo-agent-service was already emitting this and it was being accepted-but-unvalidated, which is precisely the trust problem R13 cannot have, since its whole premise is that catalog metadata is reliable."
+    },
+    "run_parameters": {
+      "type": "object",
+      "description": "JSON Schema for the per-scan parameters body (validated by RunParametersValidator at scan time). Must itself be a compilable JSON Schema — enforced in strict mode."
+    },
+    "execution_phases": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["zip_discovery", "discovery", "validation", "contacts", "scoring"] },
+      "minItems": 1,
+      "description": "RUNTIME concept, and OPTIONAL — omit it and the scanner runs its full built-in phase order. Only supply it to run a reduced subset, which is what drives test runs (R6). Ordered execution phase ids; the scanner runtime honours exactly the five enumerated in `items.enum`, in that order. Renamed from `phases` on 2026-08-03 to end the collision with the five authoring sections — see the root $comment. Not authored in the chat and not shown per-section in the draft panel; `RuntimeContextService` strips it before the builder agent sees the config, because the agent authors sections, not runtime phases.",
+      "$comment": "NOT in `required`, deliberately — corrected 2026-08-03 after aeo-agent-service confirmed they never populate it. It was required in the first cut, which would have made strict-mode finalize reject every draft the agent produces, since the only party emitting configs does not write this field. Omission is also already the normal case for scans elsewhere in the gateway: scan-runs.service.ts only sets `phases` on the job when the Strategy Tester passes an explicit subset, otherwise 'the scan task runs its built-in phases'. If a future scanner genuinely needs an explicit list, the gateway supplies it at dispatch — not the authoring agent. 🔨 CORRECTION 2026-08-05: this description previously gave the example ids as phase-0/phase-1a/phase-2/phase-3. Those were never real — the legacy AV engine does not read the phase subset at all, and configurable-prospect-scanner ignores names it does not recognise (force-including discovery), so a subset spelled that way silently ran discovery only. The five real names are now enumerated in `items.enum`, transcribed from ALL_PHASES in configurable-prospect-scanner/aeo/runner.py. Nothing can import that Python list, so when the scanner adds or renames a phase, the same PR must touch this enum and src/backend/skills/config/scanner-phases.ts — a gateway-side drift guard locks those two to each other."
+    },
+    "geography": {
+      "allOf": [{ "$ref": "#/$defs/section" }],
+      "description": "AUTHORING section 1 of 5. Geographic scope / home-market targeting. Org-specific values MUST be context refs (see $defs/contextRef, R12). Maps to runtime phase: zip discovery.",
+      "properties": {
+        "home_markets": { "$ref": "#/$defs/boundStringList" },
+        "secondary_markets": { "$ref": "#/$defs/boundStringList" },
+        "excluded_markets": { "$ref": "#/$defs/boundStringList" },
+        "targeting": { "$ref": "#/$defs/geographyTargeting" }
+      }
+    },
+    "discovery": {
+      "allOf": [{ "$ref": "#/$defs/section" }],
+      "description": "AUTHORING section 2 of 5. Discovery rules — sources, queries, ICP seeds. Maps to runtime phase: discovery sweep.",
+      "properties": {
+        "sources": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/discoverySource" },
+          "description": "Named discovery buckets. Keys are free-form bucket names; each value carries the engine's own source shape verbatim. This is the ONE part of `discovery` the scanner reads — `icp_attributes` below is currently unconsumed."
+        },
+        "lookalike_sources": { "$ref": "#/$defs/boundStringList" },
+        "icp_attributes": { "$ref": "#/$defs/boundStringList" }
+      }
+    },
+    "validation": {
+      "allOf": [{ "$ref": "#/$defs/section" }],
+      "description": "AUTHORING section 3 of 5. Signal validation rules — disqualifiers, required signals. Maps to runtime phase: signal validation.",
+      "properties": {
+        "in_market_signals": { "$ref": "#/$defs/boundStringList" },
+        "disqualifiers": { "$ref": "#/$defs/boundStringList" }
+      },
+      "$comment": "Shape ratified 2026-08-04 (thread #17) against what `aeo/phases/validation.py` actually reads, not by design-by-committee. Both fields are R12-bound positions."
+    },
+    "contacts": {
+      "allOf": [{ "$ref": "#/$defs/section" }],
+      "description": "AUTHORING section 4 of 5. Decision-maker search — target titles, contact enrichment. Maps to runtime phase: decision-maker search.",
+      "properties": {
+        "titles": { "$ref": "#/$defs/boundStringList" },
+        "seniorities": { "$ref": "#/$defs/boundStringList" }
+      },
+      "$comment": "Shape ratified 2026-08-04 (thread #17) against what `aeo/phases/contacts.py` actually reads. Both fields are R12-bound positions; note the context-field keys are `decision_titles` / `decision_seniorities`, which do NOT match the config key names — see context-field-keys.json's config_positions."
+    },
+    "scoring": {
+      "$ref": "#/$defs/section",
+      "description": "AUTHORING section 5 of 5. Scoring model — weights, emphasis. Org-specific emphasis MUST be context refs (R12). Maps to runtime phase: scoring."
+    },
+    "pipeline": {
+      "type": "object",
+      "properties": {
+        "stages": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["key"],
+            "properties": {
+              "key": { "type": "string", "minLength": 1 },
+              "label": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true,
+      "description": "Pipeline stage definitions (customer skills). Validated against prospect pipeline-status writes (skills.config.pipeline.stages[])."
+    },
+    "org_input_schema": {
+      "description": "Per-org input field declarations. Two accepted shapes (array OR object-map) — normalized by normalizeOrgInputSchema. Kept permissive here.",
+      "type": ["array", "object"]
+    }
+  },
+  "additionalProperties": false,
+  "$comment_additional_properties": "CLOSED at the envelope, OPEN inside every section — changed 2026-08-03 in answer to aeo-agent-service, who pointed out that root-level `additionalProperties: true` converted three of their four conformance defects into silence rather than errors. The worst was `productDescription` (camelCase): accepted, ignored, and `product_description` simply stayed unset — no error, no data. That is the failure mode this contract exists to prevent. The envelope is declared LOCKED in this schema's own description, so an undeclared root key is now an error; section internals stay `additionalProperties: true` because they are genuinely still being co-designed with the scanner workstream. CASING: every key in this contract is snake_case. Emit snake_case; a camelCase key is now a hard error instead of silent data loss. TRADE-OFF ACCEPTED: additive root fields now need a coordinated version bump rather than arriving free. That is the intended cost — the version policy called additive change cheap, but 'cheap' is worthless if a typo is indistinguishable from a new field.",
+  "$defs": {
+    "section": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "AUTHORING section envelope — one of the five fixed conversation steps the chat proposes and the user accepts individually. Top-level in THIS document (`geography`, not `sections.geography`). Internals intentionally open for v1 co-design; strict-mode enforcement of section internals lands once the runtime workstream ratifies each section's shape. NOT a runtime phase — see the root $comment.",
+      "$comment": "THIS SCHEMA DOES NOT DEFINE STATE_DELTA POINTERS — see agui-state-envelope.json, which does. It describes the config *document*; AG-UI STATE_DELTA pointers address the *state envelope* that carries the document, so a config section is reached at `/draftConfig/geography`, not `/geography`. An earlier version of this description claimed the sections were left top-level so 'aeo-frontend's reducer pointers need no change' — that was WRONG on both halves: it conflated the two rootings, and its premise came from a frontend statement they themselves corrected on 2026-08-03 (their pointers are `/phases/<section>` against a `{metadata, phases, acceptance, modules, libraryMatch}` draft state, so sections were never top-level on their side). Do not infer a pointer root from this file."
+    },
+    "contextRef": {
+      "type": "object",
+      "required": ["context_ref"],
+      "properties": {
+        "context_ref": {
+          "type": "string",
+          "description": "Well-known org context-field key resolved at scan time from the org's runtime context (WELL_KNOWN_ORG_INPUTS). This is how one skill serves many orgs (R12)."
+        },
+        "default": {
+          "description": "Optional documented default literal, permitted only adjacent to a context_ref."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Org-agnostic binding marker. Org-specific dimensions reference a context field instead of a literal. The R12 org-coupling lint (code-side, not pure JSON Schema) walks the config to flag bare literals in org-specific positions."
+    },
+    "boundStringList": {
+      "anyOf": [
+        { "$ref": "#/$defs/contextRef" },
+        { "type": "array", "items": { "type": "string" } }
+      ],
+      "description": "An R12-bound list dimension: either a context binding or a bare string array. Deliberately permits the literal — the ORG-COUPLING LINT rejects it, not this schema. Two reasons: the lint reports `{location, message, kind: 'org_coupling'}` which is a far better error than a JSON Schema anyOf failure, and it can distinguish an enforced position from a merely-similar one. What this $def adds is TYPE safety, which nothing had: a number, a nested object or a `{context_ref: 123}` at one of these positions previously reached the runtime unchallenged."
+    },
+    "discoverySource": {
+      "type": "object",
+      "required": ["name_field", "fields", "queries"],
+      "additionalProperties": true,
+      "properties": {
+        "name_field": {
+          "type": "string",
+          "description": "Which key in a returned record holds the company name."
+        },
+        "fields": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Fields the model is asked to return per record."
+        },
+        "queries": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Search templates, passed to the model VERBATIM. `{market}` is expanded per target market by the scanner before dispatch. A template with no placeholder is passed through once unchanged and carries NO geography — legitimate for a national registry, and the single most expensive mistake in this repo's history when unintentional (Austin zips in, Dallas firms out, three runs running). Not schema-enforceable either way: `aeo/phases/query_expansion.py` supports both deliberately, so requiring the placeholder would forbid the legitimate case."
+        },
+        "seed_firms": {
+          "not": {},
+          "description": "FORBIDDEN — do not author this. The runtime populates it by fanning out `discovery.lookalike_sources`; see context-field-keys.json's `runtime_populated_positions`."
+        }
+      },
+      "$comment": "The engine's own source shape, vendored verbatim — `SOURCE_REQUIRED_KEYS = (\"name_field\", \"fields\", \"queries\")` at config_mapping.py:36. `additionalProperties: true` because these buckets pass through to a vendored engine we do not own; closing them would reject engine keys we have not enumerated. ⚠️ `seed_firms` uses `not: {}` (matches nothing, so the key's mere presence fails) rather than omission — it is the second, independent enforcement of the library invariant R12 exists to protect: seed firms are the commissioning org's own customers, and authored as a literal here the NEXT org to connect the skill searches using the first org's customer list. Previously lint-only; a literal here passed this schema, and a model reaches for it because a bare list is the obvious way to express \"firms we already know\"."
+    },
+    "geographyTargeting": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "use_zip_discovery": {
+          "type": "boolean",
+          "description": "Opt in to the zip-discovery phase. FALSY MEANS SKIP — the phase is off unless this is explicitly true, even when `zip_discovery` is in the dispatched subset."
+        },
+        "max_zips_per_market": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Cap on zips discovered per target market."
+        },
+        "max_search_zips": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Cap on discovered zips actually searched (runtime default 10). Allocation round-robins across markets so secondary areas are not starved."
+        },
+        "geo_strictness": {
+          "type": "string",
+          "enum": ["metro", "state"],
+          "description": "How a prospect's verified location is judged against the target area. `metro` (runtime default) rejects same-state-but-different-metro; `state` accepts anywhere in state."
+        },
+        "max_queries_per_source": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Cap on expanded queries per discovery source (runtime default 12). Templates × markets multiplies fast and each expansion is a grounded search."
+        },
+        "max_discovery_rounds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Cap on discovery sweep rounds."
+        }
+      },
+      "$comment": "Shape ratified 2026-08-04 (thread #17) against what `aeo/runner.py` actually reads. Every knob is OPTIONAL and the runtime carries its own default for each, so this $def exists purely for TYPE enforcement — which nothing had: `max_search_zips: \"10\"` or `geo_strictness: \"strict\"` previously reached the scanner, where the first is `int()`-coerced by luck and the second silently falls back to `metro`. `geo_strictness` is the only enumerable one; the values are STRICTNESS_METRO/STRICTNESS_STATE at geo_filter.py:136-137."
+    }
+  }
+}

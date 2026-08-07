@@ -1,0 +1,21 @@
+# Pinned exactly, mirroring aeo-groundtruth-browser-runtime. This image is deployed
+# to AgentCore Runtime and rebuilt rarely, so a floating dependency means the thing
+# that changed between a working and a broken ARM64 build is invisible in the diff.
+#
+# Versions are the ones the code was developed and tested against in
+# aeo-agent-service, read off that environment rather than chosen fresh.
+fastapi==0.115.14
+uvicorn[standard]==0.34.3
+pydantic==2.12.5
+pydantic-settings==2.13.1
+
+# Config-contract validation and STATE_DELTA patch construction.
+jsonschema==4.26.0
+jsonpatch==1.33
+
+# The Bedrock Mantle client. Imported LAZILY inside BedrockChatModel, so the module
+# and the whole test suite import without it — but the runtime genuinely needs it.
+#
+# ⚠️ Do not grep for `import anthropic` to decide whether this is used: every import
+# here is of the `from anthropic import X` form, which does not contain that string.
+anthropic==0.120.0

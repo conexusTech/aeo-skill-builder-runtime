@@ -1,0 +1,113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://conqrse.dev/schemas/skill-builder-context-field-keys/v1.json",
+  "title": "Well-known org context-field keys (v1 — RATIFIED 2026-08-03)",
+  "description": "The closed vocabulary of org context fields a skill config may bind to instead of hardcoding a literal. This is the mechanism that makes one skill serve many orgs (PRD R8 org-agnostic authoring, enforced by the R12 lint). Owned by aeo-backend; published for aeo-agent-service (point SKILL_BUILDER_CONTEXT_FIELD_KEYS_PATH here) and aeo-frontend (client-side draft validation). Canonical source: this file. `src/specs/well-known-org-inputs.ts` derives its map from it, so the two can never drift.",
+  "version": "1.0",
+  "key_list": [
+    "home_markets",
+    "secondary_markets",
+    "excluded_markets",
+    "include_scope",
+    "decision_titles",
+    "decision_seniorities",
+    "icp_attributes",
+    "in_market_signals",
+    "disqualifiers",
+    "lookalike_sources",
+    "lead_type",
+    "industry",
+    "competitors"
+  ],
+  "$comment_key_list": "TWO VIEWS OF ONE VOCABULARY, added 2026-08-03 for aeo-agent-service, whose loader wants a flat list. `key_list` is the authoritative closed set — validate a `context_ref` against this. `keys` is the same set with per-key metadata (brief path, owning authoring section) for anything that needs to explain or route a key. They are asserted equal by well-known-org-inputs.spec.ts on our side, so a key added to one and not the other is a red test, not a silent divergence. Note the keys are UNPREFIXED (`home_markets`, not `customer.home_markets`) — see the README for why that matters if you authored configs against an earlier prefixed guess.",
+  "config_positions": [
+    { "section": "geography", "key": "home_markets", "context_ref": "home_markets" },
+    { "section": "geography", "key": "secondary_markets", "context_ref": "secondary_markets" },
+    { "section": "geography", "key": "excluded_markets", "context_ref": "excluded_markets" },
+    { "section": "contacts", "key": "titles", "context_ref": "decision_titles" },
+    { "section": "contacts", "key": "seniorities", "context_ref": "decision_seniorities" },
+    { "section": "discovery", "key": "icp_attributes", "context_ref": "icp_attributes" },
+    { "section": "discovery", "key": "lookalike_sources", "context_ref": "lookalike_sources" },
+    { "section": "validation", "key": "in_market_signals", "context_ref": "in_market_signals" },
+    { "section": "validation", "key": "disqualifiers", "context_ref": "disqualifiers" }
+  ],
+  "runtime_populated_positions": [
+    {
+      "section": "discovery",
+      "path": "sources.*.seed_firms",
+      "populated_from": "lookalike_sources",
+      "reason": "Seed firms are the commissioning org's own existing customers — org-specific by definition. Authored as a literal here they would travel with the skill, and the next org to connect it would search using the first org's customer list."
+    }
+  ],
+  "$comment_runtime_populated_positions": "A THIRD KIND OF RULE, added 2026-08-04, and it is not a binding rule. `config_positions` says \"this position must bind to a context field\"; this says \"**this position must not be authored at all** — the runtime fills it\". The distinction matters because it needs no path grammar: there is nothing to resolve, only something to forbid, so R12 can enforce it without teaching `{section, key}` a wildcard form. FOUND BY aeo-agent-service reading the scanner (thread #17): `discovery.sources.<key>.seed_firms` is org-specific data at a position R12 did not enforce, and a literal there passed the config schema (section internals are `additionalProperties: true`), passed `lintOrgCoupling` (a literal is only rejected at enumerated positions), and finalized — defeating the library invariant R12 exists to protect, in the one section the scanner actually reads. The fix has two halves and BOTH are required: the scanner fans the R12-bound `discovery.lookalike_sources` into every source's `seed_firms` at scan time (a correct path), and the lint rejects an authored `seed_firms` (closing the incorrect one). A fan-out alone would leave the hole open for anyone who authored the literal anyway.",
+  "$comment_unconsumed": "⚠️ `discovery.icp_attributes` IS ENFORCED BUT CURRENTLY UNCONSUMED (2026-08-04, same finding). R12 requires it to bind and `context_refs` resolves it, but configurable-prospect-scanner's discovery mapping reads only `discovery.sources` — so a draft that binds it correctly, passes both lints and finalizes contributes NOTHING to discovery, and no gate says so. Left enforced rather than dropped because the field is meaningful and the right fix is for the scanner to consume it as ICP context; recorded here so nobody assumes binding it already does something.",
+  "$comment_config_positions": "THE R12 LINT'S ENFORCED BINDINGS, published 2026-08-04 at aeo-agent-service's request (thread #13.6). These are the config positions where a literal is a HARD org_coupling failure at finalize, each with the exact `context_ref` required there. Until now this mapping existed only in `org-coupling.lint.ts`, so the agent could not reproduce a verdict the lint was deliberately made pure to let it reproduce. ⚠️ TWO OF THE NINE ARE NOT NAME-DERIVABLE, and they are the reason this block had to exist rather than being inferred: `contacts.titles` requires `decision_titles` (NOT `titles`) and `contacts.seniorities` requires `decision_seniorities` (NOT `seniorities`). A model authoring `contacts` naturally emits `{\"context_ref\": \"titles\"}`, which is not in `key_list` and fails hard. The lint DERIVES its rules from this array (it does not keep a second copy), so this list is enforcement, not documentation of it. `location` in a resulting issue is `\"<section>.<key>\"`, or `\"<section>.<key>.context_ref\"` when the ref itself is unknown. Positions absent from a draft are never flagged — R12 governs how a value is expressed, not whether it had to be authored; requiredness is the schema's job. Note the lint ALSO validates every other `context_ref` anywhere in the document against `key_list`, so binding a field not listed here is allowed as long as the key is real.",
+  "$comment": "HOW A BINDING LOOKS IN A CONFIG. Anywhere a config needs org-specific data, emit { \"context_ref\": \"<key from `keys` below>\" } — optionally with a sibling \"default\" literal, which is the ONLY position a literal is permitted in an org-specific field. The scanner resolves the ref per-org at scan time from that org's runtime context. A bare literal in an org-specific position is what the R12 org-coupling lint rejects (kind: org_coupling). Unknown keys are NOT silently accepted — they fail the lint, because a typo'd ref resolves to nothing at scan time and would silently narrow or widen targeting.",
+  "keys": {
+    "home_markets": {
+      "brief_path": "geography.homeMarkets",
+      "authoring_section": "geography",
+      "description": "The org's primary target markets."
+    },
+    "secondary_markets": {
+      "brief_path": "geography.secondaryMarkets",
+      "authoring_section": "geography",
+      "description": "Expansion / lower-priority markets."
+    },
+    "excluded_markets": {
+      "brief_path": "geography.excludedMarkets",
+      "authoring_section": "geography",
+      "description": "Markets to suppress from discovery."
+    },
+    "include_scope": {
+      "brief_path": "geography.includeScope",
+      "authoring_section": "geography",
+      "description": "Geographic scope qualifier for the org's targeting."
+    },
+    "decision_titles": {
+      "brief_path": "decisionMakers.titles",
+      "authoring_section": "contacts",
+      "description": "Job titles that identify a decision maker for this org."
+    },
+    "decision_seniorities": {
+      "brief_path": "decisionMakers.seniorities",
+      "authoring_section": "contacts",
+      "description": "Seniority bands that qualify as a decision maker."
+    },
+    "icp_attributes": {
+      "brief_path": "icp.attributes",
+      "authoring_section": "discovery",
+      "description": "Ideal-customer-profile attributes used to seed and filter discovery."
+    },
+    "in_market_signals": {
+      "brief_path": "icp.inMarketSignals",
+      "authoring_section": "validation",
+      "description": "Signals indicating a prospect is currently in-market."
+    },
+    "disqualifiers": {
+      "brief_path": "icp.disqualifiers",
+      "authoring_section": "validation",
+      "description": "Attributes that disqualify a prospect outright."
+    },
+    "lookalike_sources": {
+      "brief_path": "icp.lookalikeSources",
+      "authoring_section": "discovery",
+      "description": "Existing accounts or sources to find lookalikes from."
+    },
+    "lead_type": {
+      "brief_path": "leadType",
+      "authoring_section": "discovery",
+      "description": "The org's lead type. Also one of the three R13 catalog-match dimensions."
+    },
+    "industry": {
+      "brief_path": "organization.industry",
+      "authoring_section": "discovery",
+      "description": "The org's industry."
+    },
+    "competitors": {
+      "brief_path": "organization.competitors",
+      "authoring_section": "discovery",
+      "description": "The org's named competitors."
+    }
+  }
+}

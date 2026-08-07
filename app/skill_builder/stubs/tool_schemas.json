@@ -1,0 +1,98 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://conqrse.dev/schemas/skill-builder-tool-calls/v1.json",
+  "title": "Skill Builder tool-call + tool-result contract (v1 — RATIFIED 2026-08-03)",
+  "description": "The two tool calls the builder agent emits, and the result envelope the gateway returns. Owned by aeo-backend; the arg shapes are pinned verbatim from aeo-agent-service's 2026-08-03 report (they emit these today) so this file DOCUMENTS an implemented wire rather than proposing a new one. aeo-agent-service: point SKILL_BUILDER_TOOL_SCHEMAS_PATH here. aeo-frontend: `TOOL_CALL_ARGS.delta` parses against `tool_calls.<name>.args`.",
+  "version": "1.0",
+  "$comment": "WIRE FACTS THAT ARE EASY TO GET WRONG — all three confirmed by aeo-agent-service 2026-08-03. (1) One logical tool call arrives as THREE AG-UI events back-to-back: TOOL_CALL_START {type,toolCallId,toolCallName,parentMessageId?} → TOOL_CALL_ARGS {type,toolCallId,delta} → TOOL_CALL_END {type,toolCallId}. (2) `delta` is the COMPLETE args object as a single JSON string — it is NOT token-streamed, though concatenating deltas still works if you implement it generically. (3) Results do NOT arrive on TOOL_CALL_END; END carries only toolCallId. A consumer that models results on END will wait forever. TOOL_CALL_ARGS is the only event carrying draft_config, so dropping it silently disables test-run and finalize entirely — which is exactly the defect aeo-frontend found in their own union on 2026-08-03. (4) The agent validates the draft (require_complete) AND the args before emitting, so a tool call for an incomplete config never reaches us.",
+  "$comment_envelope": "ENVELOPE KEYS: `tools` keyed by tool name, each with `description` + `input_schema`. Adopted from aeo-agent-service 2026-08-03 (this file first shipped as `tool_calls` + `args`). Their names win because `{name, description, input_schema}` is the Anthropic tool-definition convention their client already passes to the model — matching it saves them a translation layer and removes a place for the two shapes to drift. They offered to adapt to ours; taking theirs was the better engineering call, not a concession.",
+  "$comment_finalize_draft_config": "IS `draft_config` AUTHORITATIVE AT FINALIZE? NO — it is informational, ruled 2026-08-04 in answer to thread #13.7. `POST .../sessions/:sessionId/finalize` takes NO request body: it reads the config the gateway persisted on the session (`skill_builder_sessions.draft_config`) and validates THAT. One source of truth, so nothing can diverge between what is validated and what is written. But the asymmetry aeo-agent-service raised is real and is NOT dismissed: they validate this argument `require_complete` before emitting, so if a STATE_DELTA ever failed to apply on our side, they would have validated one document while we finalized another, and nothing would have said so. The fix belongs at R2, not here — R2's tool-call handler compares this argument against the persisted draft and rejects the tool call (`kind: \"other\"`, repairable in-conversation) when they differ, rather than silently finalizing a different document. So: do not treat this arg as the thing we act on, DO keep sending it, because it is the only way the divergence is detectable. Same rule will apply to request_test_run when R6 lands. This is the second time a contract question has turned on 'validated by whom, against what' — the round-trip invariant in agui-state-envelope.json was the first.",
+  "$comment_draft_config": "WHY `draft_config` IS A BARE OBJECT AND NOT A $ref. It previously carried {\"$ref\": \"https://conqrse.dev/schemas/skill-builder-config/v1.json\"}, which is unresolvable — a standard validator raises outright (aeo-agent-service: `_WrappedReferencingError: Unresolvable`), and aeo-frontend would have hit the same wall validating TOOL_CALL_ARGS.delta. Their suggested fix was a relative-path $ref, but that would ALSO have failed: a relative ref resolves against this document's base URI, which is its own absolute `$id`, so `./skill-builder-config.schema.json` becomes `https://conqrse.dev/schemas/skill-builder-config.schema.json` and still doesn't resolve. Rather than depend on every consumer pre-loading an $id→file registry, validation here is deliberately TWO STEPS: (1) validate the args envelope against this file, (2) validate `draft_config` against skill-builder-config.schema.json separately. That is what the gateway already does internally (Ajv, config schema only), it needs zero resolution machinery, and it works identically in every library.",
+  "tools": {
+    "request_test_run": {
+      "description": "Agent asks the gateway to execute the accepted draft as a reduced-phase test scan (R6). Gateway re-applies the prospect_real_tests_enabled gate; the agent's asking does not bypass it.",
+      "input_schema": {
+        "type": "object",
+        "required": ["draft_config"],
+        "properties": {
+          "draft_config": {
+            "type": "object",
+            "description": "The full draft config. VALIDATE SEPARATELY against skill-builder-config.schema.json — see $comment_draft_config. Gateway applies strict mode at test-run start."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Optional free-text rationale for the conversation record."
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "request_finalize": {
+      "description": "Agent asks the gateway to finalize the draft into a `skills` row and connect it to the org (R8). Status is `tested` ONLY when the session has a real test run, else `configured` — corrected 2026-08-04, this previously said `tested` unconditionally and R6 is blocked, so every finalize today lands `configured`. The SU activation gate is unchanged and still applies afterwards.",
+      "input_schema": {
+        "type": "object",
+        "required": ["draft_config"],
+        "properties": {
+          "draft_config": {
+            "type": "object",
+            "description": "The full draft config. VALIDATE SEPARATELY against skill-builder-config.schema.json — see $comment_draft_config. ⚠️ INFORMATIONAL TO THE GATEWAY AT FINALIZE — see $comment_finalize_draft_config. Gateway applies strict mode + the R12 org-coupling lint to the config it has PERSISTED, not to this argument."
+          },
+          "slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "maxLength": 100,
+            "description": "Optional catalog slug. Convention <vertical>-prospect-scanner (Q2); gateway auto-suffixes on collision, so a colliding slug is not an error."
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "tool_result": {
+    "description": "What the gateway returns for either tool call. Agent parses with extra=ignore, so fields may be added without a version bump.",
+    "type": "object",
+    "required": ["tool_name", "status"],
+    "properties": {
+      "tool_name": {
+        "enum": ["request_test_run", "request_finalize"]
+      },
+      "status": {
+        "enum": ["succeeded", "rejected", "declined"],
+        "description": "succeeded = the gateway did it. rejected = the gateway refused on contract grounds (see issues[]) and the agent should repair in-conversation. declined = a human/policy gate said no (e.g. real tests disabled) and repair is pointless — surface the explanation instead of retrying."
+      },
+      "summary": {
+        "type": "string",
+        "description": "Short human-facing outcome for the chat."
+      },
+      "explanation": {
+        "type": "string",
+        "description": "Longer reasoning, used mainly for `declined`."
+      },
+      "issues": {
+        "type": "array",
+        "description": "Populated on `rejected`. Maps 1:1 from the config validator's details[] ({field,message} → {location,message}).",
+        "items": {
+          "type": "object",
+          "required": ["location", "message"],
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "JSON pointer or dotted path into the draft config."
+            },
+            "message": { "type": "string" },
+            "kind": {
+              "enum": ["schema_violation", "org_coupling", "other"],
+              "default": "other",
+              "description": "THREE kinds, not two — `other` is the default when omitted, so a rejection sent without a kind still parses on the agent side. schema_violation = failed the config JSON Schema. org_coupling = failed the R12 lint (a bare literal where a context_ref is required). other = anything else."
+            }
+          },
+          "additionalProperties": true
+        }
+      }
+    },
+    "additionalProperties": true
+  }
+}

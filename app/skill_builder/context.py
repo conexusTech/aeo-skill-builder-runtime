@@ -1,0 +1,164 @@
+"""Customer context grounding (PRD §5) + the injection guardrail (PRD §9).
+
+`forwardedProps.customer_context` is the org runtime-context JSON — org columns
++ the onboarding_data blob (geographic_strategy, icp_seeds, contact_discovery,
+scoring_strategy, lead_scoring, …) + Neo4j :Persona/:Product nodes + skill
+config context. It is already live (GET /runtime/organizations/:orgId/context)
+and consumed as-is; its shape is owned by that endpoint, not by us, so this
+module treats it as an arbitrary dict and digs defensively.
+
+Two jobs:
+  1. Surface the few facts the first assistant message MUST reflect — customer
+     name, ICP summary, lead type — so the operator can immediately catch a
+     wrong-org error (PRD §5 acceptance criterion).
+  2. Render the blob for the prompt as DATA, never instructions. Onboarding
+     free-text is untrusted (PRD §9 / Risk: prompt injection); `as_prompt_block`
+     fences it so a "ignore your instructions…" string inside an ICP field is
+     read as content, not obeyed. The agent has no write authority regardless
+     (defense in depth), but the fence is the first line.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+# Sentinel fence markers. The baseline prompt layer (app.skill_builder.prompt)
+# tells the model that everything between these markers is untrusted data.
+CONTEXT_FENCE_OPEN = "<<<CUSTOMER_CONTEXT_DATA>>>"
+CONTEXT_FENCE_CLOSE = "<<<END_CUSTOMER_CONTEXT_DATA>>>"
+
+#: What replaces a fence sentinel found inside the customer blob. Deliberately
+#: contains no angle brackets, so the replacement cannot itself be mistaken for a
+#: marker (see `CustomerContext.as_prompt_block`).
+_FENCE_REMOVED = "[fence-marker removed]"
+
+
+def _first(data: dict[str, Any], *paths: str) -> Any:
+    """Return the first present, non-empty value across candidate dotted paths.
+
+    The blob's exact layout varies (top-level org columns vs nested
+    onboarding_data), so callers pass several likely locations and take the
+    first hit. Never raises on a missing branch.
+    """
+    for path in paths:
+        node: Any = data
+        ok = True
+        for part in path.split("."):
+            if isinstance(node, dict) and part in node:
+                node = node[part]
+            else:
+                ok = False
+                break
+        if ok and node not in (None, "", [], {}):
+            return node
+    return None
+
+
+def _first_str(data: dict[str, Any], *paths: str) -> str | None:
+    """`_first` narrowed to a string — org columns we surface are text fields;
+    a non-string hit reads as absent rather than leaking a non-str value."""
+    value = _first(data, *paths)
+    return value if isinstance(value, str) else None
+
+
+class CustomerContext:
+    """Read-only view over the customer_context blob. Not a Pydantic model —
+    the blob is arbitrary and owned elsewhere; wrapping it keeps parsing
+    defensive and free-text firmly in the 'data' lane."""
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        self.data: dict[str, Any] = data or {}
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.data
+
+    @property
+    def organization_name(self) -> str | None:
+        return _first_str(
+            self.data,
+            "organization_name",
+            "organization.name",
+            "name",
+            "org.name",
+        )
+
+    @property
+    def vertical(self) -> str | None:
+        return _first_str(
+            self.data,
+            "vertical",
+            "industry",
+            "organization.vertical",
+            "onboarding_data.vertical",
+        )
+
+    @property
+    def lead_type(self) -> str | None:
+        return _first_str(
+            self.data,
+            "lead_type",
+            "onboarding_data.lead_type",
+            "lead_scoring.lead_type",
+        )
+
+    @property
+    def icp_summary(self) -> str | None:
+        """A short human string describing the ICP, for the first message.
+
+        Prefers an explicit summary field; falls back to serialising the ICP
+        seeds. Whatever it returns is DATA — the caller fences it.
+        """
+        explicit = _first(
+            self.data,
+            "icp_summary",
+            "onboarding_data.icp_summary",
+            "onboarding_data.icp_seeds.summary",
+        )
+        if isinstance(explicit, str):
+            return explicit
+        seeds = _first(self.data, "icp_seeds", "onboarding_data.icp_seeds")
+        if isinstance(seeds, list) and seeds:
+            return ", ".join(str(s) for s in seeds[:5])
+        if isinstance(seeds, dict) and seeds:
+            return json.dumps(seeds, separators=(",", ":"))[:400]
+        return None
+
+    def first_message_facts(self) -> dict[str, str]:
+        """The customer / ICP / lead-type facts the opening message must state
+        (PRD §5). Missing values are rendered as an explicit 'unknown' string so
+        the opener still surfaces the gap rather than silently omitting it —
+        which is exactly the wrong-org signal the operator watches for."""
+        return {
+            "customer": self.organization_name or "unknown (no organization name in context)",
+            "lead_type": self.lead_type or "unknown",
+            "icp": self.icp_summary or "unknown (no ICP data in context)",
+        }
+
+    def as_prompt_block(self) -> str:
+        """The blob rendered for the prompt, fenced as untrusted DATA (PRD §9).
+
+        The full context is serialized deterministically (sorted keys) so the
+        prefix is byte-stable turn to turn — required for the manual
+        prompt-cache breakpoint the model layer places over this block on
+        Bedrock (no automatic caching there; turns are billed per invocation).
+        """
+        body = json.dumps(self.data, sort_keys=True, indent=2, default=str)
+        # Neutralise the sentinels where they occur INSIDE the data. Without this a
+        # hostile value (e.g. organization_name) reproduces the close-fence
+        # verbatim, so the model reading "everything between the fences is data"
+        # sees the block end early — which is exactly what this guardrail exists
+        # to prevent, on a surface whose entire input is untrusted onboarding free
+        # text. JSON encoding blunts the attack (a real newline cannot be
+        # injected, and the payload stays inside a string) but that is incidental,
+        # not a guarantee.
+        #
+        # Applied to the SERIALIZED body so it catches sentinels in keys as well as
+        # values, at any nesting depth, without walking the structure. The marker
+        # is visible rather than silent so an operator can see it happened, and the
+        # substitution is deterministic, so the byte-stability the prompt cache
+        # needs is preserved.
+        for fence in (CONTEXT_FENCE_OPEN, CONTEXT_FENCE_CLOSE):
+            body = body.replace(fence, _FENCE_REMOVED)
+        return f"{CONTEXT_FENCE_OPEN}\n{body}\n{CONTEXT_FENCE_CLOSE}"

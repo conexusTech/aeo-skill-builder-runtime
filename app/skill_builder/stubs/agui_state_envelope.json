@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://conqrse.dev/schemas/skill-builder-agui-state/v1.json",
+  "title": "Skill Builder AG-UI state envelope (v1 — RATIFIED 2026-08-03, wire-verified)",
+  "description": "The AG-UI state object carried by STATE_SNAPSHOT and addressed by STATE_DELTA RFC-6902 pointers. Owned by aeo-backend because the R2 turn endpoint is the pipe that applies and persists these events. Separate from skill-builder-config.schema.json on purpose: that file describes the config DOCUMENT, this one describes the ENVELOPE the document travels in. Conflating the two is what produced the defect this contract exists to prevent.",
+  "version": "1.0",
+  "$comment": "WHY THIS FILE EXISTS. On 2026-08-03 all three repos disagreed about the pointer root and nothing on the wire declared it. aeo-frontend patched `/phases/<section>` against a `{metadata, phases, acceptance, modules, libraryMatch}` draft state. aeo-agent-service emitted config-rooted `/geography/scope` while their own STATE_SNAPSHOT emitted `{draftConfig, acceptance}` — so their deltas could not be applied to their own snapshot (`JsonPointerException: member 'geography' not found`); their docstring said 'patch against draftConfig' but the root was never applied. The gateway's config schema, meanwhile, carried a description asserting a pointer root it had no business defining. Nobody caught any of it because R2 is unbuilt, so **no consumer had ever applied one of these deltas**. It surfaced only because frontend refused to reshape a second time without one real emitted op. Both siblings have since conformed to this file (agent-service `7f88631`).",
+  "$comment_invariant": "THE ROUND-TRIP INVARIANT — the property that actually catches this class of bug. **Every emitted STATE_DELTA must apply cleanly to the most recent STATE_SNAPSHOT from the same turn.** Assert it on both sides; it is a two-line test and it is the only check that would have failed on the pre-2026-08-03 wire, because each event was individually well-formed and self-consistent. Reviewing either event alone finds nothing. Note also what did NOT catch it: three documents describing the shape, and a frontend mock that (in their words) 'confirms our implementation instead of your contract'. Pin shapes from an emitter, then prove them by round trip.",
+  "type": "object",
+  "required": ["draftConfig", "acceptance"],
+  "properties": {
+    "draftConfig": {
+      "type": "object",
+      "description": "The skill config under construction. Validate its CONTENT separately against skill-builder-config.schema.json (two-step, same as tool-call args). Its keys are that schema's keys verbatim — snake_case, e.g. `product_description` — so pointers read /draftConfig/geography/…, /draftConfig/scoring/…, and never /draftConfig/phases/<section>."
+    },
+    "acceptance": {
+      "type": "object",
+      "description": "Per-section acceptance state, keyed by the five authoring section names (geography, discovery, validation, contacts, scoring). Pointers are /acceptance/<section>.",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true,
+  "$comment_acceptance_placement": "`acceptance` is a SIBLING of `draftConfig`, never nested inside it. Acceptance is conversation state: which sections the user has approved so far. The config is the artifact that gets persisted to `skills.config` at finalize. Nesting acceptance inside the config would carry per-turn conversation bookkeeping into a stored skill definition, where it would then be read back as if it were part of the skill's behaviour. Both siblings independently assumed this placement; it is recorded here so the reason survives, not just the shape.",
+  "$comment_pointer_examples": {
+    "correct": [
+      "/draftConfig/geography/scope",
+      "/draftConfig/scoring/weights",
+      "/acceptance/contacts"
+    ],
+    "wrong": [
+      "/geography/scope — config-rooted; cannot apply to the envelope (agent-service's pre-7f88631 emitter)",
+      "/phases/geography — sections nested under a `phases` key (aeo-frontend's pre-correction reducer); also collides with the runtime execution vocabulary, see the config schema's root $comment",
+      "/draftConfig/phases/geography — same collision, one level down",
+      "/metadata/name — no `metadata` key in this envelope; catalog metadata lives in draftConfig (`name`, `slug`, `vertical`, …)"
+    ]
+  }
+}

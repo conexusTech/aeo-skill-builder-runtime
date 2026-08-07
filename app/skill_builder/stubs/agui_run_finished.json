@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://conqrse.dev/schemas/skill-builder-agui-run-finished/v1.json",
+  "title": "Skill Builder AG-UI RUN_FINISHED result (v1 — RATIFIED 2026-08-04, emitter-verified)",
+  "description": "The `result` object on a RUN_FINISHED event. Owned by aeo-backend for the same reason as the state envelope: the R2 turn endpoint is the pipe that reads these and decides what a turn's terminal state means. Kept as a SEPARATE file from agui-state-envelope.json deliberately — that file describes the state a turn mutates, this one describes how a turn ends, and folding them together would repeat exactly the document-vs-envelope conflation that the state file exists to prevent.",
+  "version": "1.0",
+  "$comment_status": "RATIFIED 2026-08-04 by aeo-agent-service against `protocol/agui.py` / `runtime.py` / `tools.py` — the emitter, not their docs. Published one day earlier as v0.9 PROPOSED because it was transcribed second-hand (frontend read their emitter, we transcribed frontend); flagging it as a draft rather than asserting it is why ratification took one reply instead of a round of rework, and it is the habit to repeat: **cite the emitter or don't claim it.** Four corrections were folded in at ratification — `reason` closed to four values, `awaiting_finalize` marked unreachable, `match_slug` added, and the 'never emitted bare' claim withdrawn. ⚠️ **Line citations were deliberately removed.** The original carried `tools.py:115`/`:193` and `runtime.py:210`/`:243`/`:248`; all five had already moved within a day. Behaviour survives a refactor, line numbers do not — so the optionality of `phase` is now described by which call sites omit it, not by where they were.",
+  "$comment_why": "WHY THIS FILE EXISTS. aeo-frontend declared RUN_FINISHED as carrying a sibling `interrupt: {reason}` key; the emitter puts it on `result`. Against a real stream their reducer read `event.interrupt` → undefined, so **every interrupted turn would have reported done with a null reason** and the human-in-the-loop pause the PRD specifies (§4) would never have registered. Their type was self-consistent and tsc-clean — it was simply wrong about the wire, and the field is written but not yet read, so nothing rendered differently. Fifth defect of this class in this feature, and like the others it was found by reading an emitter rather than by a test.",
+  "$comment_r2_rule": "THE RULE R2 MUST FOLLOW: discriminate on `result.outcome`, NEVER on the presence of `result`. 'Has a result therefore is an interrupt' misreads two of the three kinds — a `tool_call` read as an interrupt parks a turn that should have dispatched a tool, and a `finalized` read the same way hangs the conversation at its last step. ⚠️ **`result` and `outcome` must both be treated as possibly ABSENT, and a missing one as a non-interrupt terminal.** The first draft of this file justified the rule by claiming RUN_FINISHED is never emitted bare; agent-service withdrew that at ratification — every *runtime* path carries an outcome today, but `AGUIEmitter.run_finished()` takes `result` optional and a test exercises the bare form, so bare is possible by API and merely absent by habit. The rule survives the correction unchanged, which is the point: it was robust either way, while an unguarded `result.outcome` access resting on the impossibility claim would not have been.",
+  "type": "object",
+  "required": ["outcome"],
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": ["interrupt", "tool_call", "finalized"],
+      "description": "The discriminator. Three kinds, not two. aeo-frontend collapses tool_call and finalized to a single `done` state deliberately — they learn about tool calls from the TOOL_CALL_* events and about finalize from their own action — but that is a consumer choice, not a property of the wire."
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "awaiting_phase_acceptance",
+        "awaiting_decision",
+        "awaiting_test_run",
+        "awaiting_finalize"
+      ],
+      "description": "Present on `interrupt`. A snake_case enum on the wire, NOT prose — aeo-frontend's mock invented `\"awaiting phase acceptance\"`, which no comparison against the real value would ever match. ⚠️ **`awaiting_finalize` is DECLARED BUT EMITTED BY NO PATH as of 2026-08-04.** Enumerated because it is legal, flagged because a consumer that builds a required branch for it waits on an event that cannot arrive — 'declared' and 'reachable' are different facts and this file states both. agent-service holds the reachable subset as a separate constant with a test, so the divergence cannot rot silently.",
+      "$comment": "CLOSED AT RATIFICATION, AND IT COULD NOT HAVE BEEN CLOSED A DAY EARLIER — the reason why is the interesting part. `ModelDecision.interrupt_reason` was free text forwarded to the wire unvalidated, so a model proposing `\"awaiting_user_input\"` or a prose sentence would have emitted a reason no consumer has a branch for: the turn succeeds, the UI renders no control, and the conversation appears to stall on its own. Found by agent-service while checking this file's note that the set was not safe to close. Now coerced onto the enum (unknown → `awaiting_decision`, the honest generalisation, and the one that always has a control) and enum-constrained in the model's structured output (`9660426`). Leaving the vocabulary open on second-hand evidence was the right call and it is what surfaced the hole."
+    },
+    "step": {
+      "type": "string",
+      "description": "⚠️ LOAD-BEARING AND PREVIOUSLY UNDOCUMENTED. `awaiting_decision` is emitted at FIVE distinct gates, distinguished ONLY by `step` — the reason alone cannot tell a UI which control to render, so a consumer that reads `reason` and ignores `step` looks correct while offering the wrong buttons. Known values: connect_or_build, kickoff_confirmation, connect, request_declined, review_test_results.",
+      "enum": [
+        "connect_or_build",
+        "kickoff_confirmation",
+        "connect",
+        "request_declined",
+        "review_test_results"
+      ]
+    },
+    "phase": {
+      "type": "string",
+      "description": "The authoring section a phase-acceptance interrupt is waiting on. ⚠️ GENUINELY OPTIONAL — the two phase-acceptance interrupts raised from agent-service's TOOL layer omit it, while the three raised from their RUNTIME layer include it. A consumer must not assume it is present. Where present it is one of the five authoring sections (see authoring-sections.ts). (Described by call site rather than line number on purpose: the five line references this file originally carried had all moved within a day.)"
+    },
+    "match_slug": {
+      "type": "string",
+      "description": "The catalog slug of the R13 library match. Present on `interrupt` alongside `step: connect_or_build` and `step: connect`, and on no other step. Added at ratification because the open root meant it was passing through un-rejected and unnoticed: a UI rendering a 'connect it instead' control has nothing to name or act on without it, so the operator would be offered a reuse decision about an unnamed skill."
+    },
+    "tool": {
+      "type": "string",
+      "description": "Present on `tool_call` — which tool the turn ended in order to call. See tool-call-schemas.json for the args envelopes.",
+      "enum": ["request_test_run", "request_finalize"]
+    },
+    "usage": {
+      "type": "object",
+      "description": "Per-turn Bedrock token usage, accumulated by agent-service across however many model calls sat behind the turn (a repair loop can make several). Ruled in thread #14 as the carrier for Q3 billing: the gateway CANNOT observe these — the model call happens inside the AgentCore runtime — so this field is the only path by which a builder session's cost ever becomes known. **SHIPPED 2026-08-04 (`9660426`)**, accumulated on the emitter so none of the four terminal paths can forget it. ⚠️ Keep the four counts SEPARATE: cached input bills far below fresh input, and the `cache_control` breakpoint is this feature's main cost lever, so a single summed `input_tokens` both overstates a long session and erases the lever from the only data anyone could use to tune it. Never divide these by turn count to infer a per-call figure.",
+      "$comment_omitted_vs_zero": "⚠️ `usage` IS OMITTED, NOT ZEROED, WHEN NO MODEL RAN — and consumers must preserve that distinction rather than collapsing it. All-zeros would assert that a model ran and cost nothing, which cannot happen; absence means 'not measured'. A consumer that defaults the object to zeros makes a lost or never-sent usage payload indistinguishable from a genuinely cheap session, which is this feature's signature defect: not a crash, a plausible number. ALSO: the Anthropic SDK's field names are NOT the wire's — `cache_read_input_tokens` / `cache_creation_input_tokens`, and both are Optional (None when a request carried no cache breakpoint). Anything re-deriving this mapping should read `anthropic.types.Usage` rather than infer it, because a wrong mapping yields a zero, and a zero is indistinguishable from a cache that never hit — the one number the lever is tuned by.",
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "cache_read_tokens": { "type": "integer", "minimum": 0 },
+        "cache_write_tokens": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false,
+  "$comment_additional_properties": "CLOSED at ratification, having shipped open. Open was right for a second-hand draft — an unknown key was then more likely a real field nobody transcribed than a defect — and that tolerance is exactly how `match_slug` reached us un-rejected and unnoticed for a day. Now that the shape is emitter-verified the risk inverts, and the config schema's precedent applies: a closed root is what turned a silent camelCase typo into an error in two repos. Cost accepted, same as there — an additive field now needs a coordinated version bump, because 'additive is cheap' is worthless when a typo is indistinguishable from a new field."
+}

@@ -1,0 +1,408 @@
+"""Turn handler — integrates protocol + context + draft + validator (PRD §3/§4/§5)."""
+
+from app.skill_builder import draft
+from app.skill_builder.model import FakeChatModel, ModelDecision
+from app.skill_builder.protocol.agui import EventType
+from app.skill_builder.runtime import handle_turn
+
+
+def _continuation(acceptance, draft_config=None, user="ok"):
+    return {
+        "messages": [
+            {"role": "user", "content": "start"},
+            {"role": "assistant", "content": "proposal"},
+            {"role": "user", "content": user},
+        ],
+        "state": {"draftConfig": draft_config or {}, "acceptance": acceptance},
+        "forwardedProps": {"customer_context": {"organization_name": "ACME"}},
+    }
+
+
+def _kickoff_payload(**ctx):
+    return {
+        "threadId": "sess-1",
+        "runId": "run-1",
+        "messages": [{"role": "user", "content": "start"}],
+        "forwardedProps": {"customer_context": ctx},
+    }
+
+
+def _types(res):
+    return [e.type for e in res.emitter.events]
+
+
+def test_kickoff_emits_expected_event_sequence():
+    res = handle_turn(_kickoff_payload(organization_name="NAPA Phoenix", vertical="auto parts"))
+    assert _types(res) == [
+        EventType.RUN_STARTED,
+        EventType.TEXT_MESSAGE_START,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TEXT_MESSAGE_END,
+        EventType.STATE_SNAPSHOT,
+        EventType.RUN_FINISHED,
+    ]
+
+
+def test_kickoff_first_message_reflects_customer():
+    # PRD §5 acceptance: name the customer, ICP, lead type in the opener.
+    res = handle_turn(
+        _kickoff_payload(
+            organization_name="NAPA Phoenix",
+            vertical="auto parts",
+            # MIXED rather than "B": a single letter would pass this assertion
+            # by appearing inside any other word in the opener.
+            lead_type="MIXED",
+            icp_summary="regional fleets 50+ vehicles",
+        )
+    )
+    content = res.emitter.wire_events()[2]["delta"]
+    assert "NAPA Phoenix" in content
+    assert "MIXED" in content
+    assert "regional fleets 50+ vehicles" in content
+
+
+def test_kickoff_snapshot_is_a_valid_skeleton():
+    res = handle_turn(_kickoff_payload(organization_name="ACME", vertical="auto parts"))
+    snapshot = res.emitter.wire_events()[4]["snapshot"]
+    draft_config = snapshot["draftConfig"]
+    assert draft_config["slug"] == "auto-parts-prospect-scanner"
+    for phase in ("geography", "discovery", "validation", "contacts", "scoring"):
+        assert phase in draft_config
+
+
+def test_kickoff_interrupts_awaiting_decision():
+    res = handle_turn(_kickoff_payload(organization_name="ACME"))
+    finished = res.emitter.wire_events()[-1]
+    assert finished["type"] == EventType.RUN_FINISHED
+    assert finished["result"]["outcome"] == "interrupt"
+    assert finished["result"]["reason"] == "awaiting_decision"
+
+
+def test_kickoff_composes_five_layer_system_prompt():
+    res = handle_turn(_kickoff_payload(organization_name="ACME"))
+    assert "Platform baseline" in res.system_prompt
+    assert "Customer context" in res.system_prompt
+    assert "request_finalize" in res.system_prompt
+
+
+def test_kickoff_with_catalog_hit_proposes_connect_not_build():
+    payload = {
+        "messages": [{"role": "user", "content": "start"}],
+        "forwardedProps": {
+            "customer_context": {
+                "organization_name": "Denver Auto",
+                "vertical": "auto parts",
+                "lead_type": "B",
+            },
+            "catalog": [
+                {
+                    "name": "Auto Parts Scanner",
+                    "slug": "auto-parts-prospect-scanner",
+                    "vertical": "auto parts",
+                    "lead_type": "B",
+                    "skill_type": "customer",
+                    "status": "active",
+                }
+            ],
+        },
+    }
+    res = handle_turn(payload)
+    types = _types(res)
+    # Connect proposal — NO build-new skeleton snapshot on a hit.
+    assert EventType.STATE_SNAPSHOT not in types
+    finished = res.emitter.wire_events()[-1]
+    assert finished["result"]["step"] == "connect_or_build"
+    assert finished["result"]["match_slug"] == "auto-parts-prospect-scanner"
+    assert "Auto Parts Scanner" in res.emitter.wire_events()[2]["delta"]
+
+
+def test_kickoff_without_match_builds_new_with_snapshot():
+    payload = {
+        "messages": [{"role": "user", "content": "start"}],
+        "forwardedProps": {
+            "customer_context": {"organization_name": "ACME", "vertical": "auto parts",
+                                 "lead_type": "B"},
+            "catalog": [],  # empty catalog → build new
+        },
+    }
+    res = handle_turn(payload)
+    assert EventType.STATE_SNAPSHOT in _types(res)
+    assert res.emitter.wire_events()[-1]["result"]["step"] == "kickoff_confirmation"
+
+
+def test_continuation_reports_next_open_phase():
+    payload = {
+        "threadId": "sess-1",
+        "messages": [
+            {"role": "user", "content": "start"},
+            {"role": "assistant", "content": "kickoff"},
+            {"role": "user", "content": "yes that's right"},
+        ],
+        "state": {"draftConfig": {}, "acceptance": {"geography": True}},
+        "forwardedProps": {"customer_context": {"organization_name": "ACME"}},
+    }
+    res = handle_turn(payload)
+    finished = res.emitter.wire_events()[-1]
+    assert finished["result"]["reason"] == "awaiting_phase_acceptance"
+    assert finished["result"]["phase"] == "discovery"
+
+
+def test_all_phases_accepted_offers_test_run():
+    payload = {
+        "messages": [
+            {"role": "user", "content": "start"},
+            {"role": "assistant", "content": "..."},
+            {"role": "user", "content": "accept scoring"},
+        ],
+        "state": {
+            "draftConfig": {},
+            "acceptance": {p: True for p in
+                          ("geography", "discovery", "validation", "contacts", "scoring")},
+        },
+        "forwardedProps": {"customer_context": {"organization_name": "ACME"}},
+    }
+    res = handle_turn(payload)
+    assert res.emitter.wire_events()[-1]["result"]["reason"] == "awaiting_test_run"
+
+
+def test_run_error_never_leaks_the_exception_text():
+    """RUN_ERROR reaches the operator's browser via the gateway.
+
+    Provider errors embed our own infrastructure identifiers — a Bedrock 403
+    names `arn:aws:iam::<account>:user/...` verbatim — so the exception text must
+    stay in the logs. Asserts the leak is absent, not merely that an error is
+    emitted: the previous version interpolated `{exc}` and looked perfectly fine.
+    """
+    secret = "arn:aws:iam::082585646836:user/leo.lindo is not authorized"
+
+    class _Exploding(FakeChatModel):
+        def decide(self, **kwargs):
+            raise PermissionError(secret)
+
+    res = handle_turn(
+        _continuation({"geography": True}), model=_Exploding(None)
+    )
+    err = res.emitter.wire_events()[-1]
+    assert err["type"] == EventType.RUN_ERROR
+    assert err["code"] == "internal_error"
+    body = str(res.emitter.wire_events())
+    assert secret not in body
+    assert "PermissionError" not in body
+    assert "arn:aws:iam" not in body
+
+
+def test_malformed_payload_yields_run_error_not_crash():
+    # messages must be a list; a string is malformed. No exception escapes.
+    res = handle_turn({"messages": "not-a-list"})
+    types = _types(res)
+    assert EventType.RUN_ERROR in types
+    err = res.emitter.wire_events()[-1]
+    assert err["code"] == "invalid_input"
+
+
+def _with_tool_result(result: dict):
+    return {
+        "messages": [
+            {"role": "user", "content": "finalize"},
+            {"role": "assistant", "content": "requesting finalize"},
+            {"role": "tool", "tool_call_id": "tc-1", "content": result},
+        ],
+        "forwardedProps": {"customer_context": {"organization_name": "ACME"}},
+    }
+
+
+def test_pending_rejection_routes_to_repair_not_terminal():
+    payload = _with_tool_result(
+        {"tool_name": "request_finalize", "status": "rejected",
+         "issues": [{"location": "/scoring", "message": "literal", "kind": "org_coupling"}]}
+    )
+    res = handle_turn(payload)
+    finished = res.emitter.wire_events()[-1]
+    assert finished["result"]["reason"] == "awaiting_phase_acceptance"
+
+
+def test_pending_finalize_success_is_terminal():
+    payload = _with_tool_result({"tool_name": "request_finalize", "status": "succeeded"})
+    res = handle_turn(payload)
+    assert res.emitter.wire_events()[-1]["result"]["outcome"] == "finalized"
+
+
+def test_unparseable_tool_result_becomes_run_error():
+    payload = _with_tool_result({"garbage": True})  # no tool_name/status
+    res = handle_turn(payload)
+    assert EventType.RUN_ERROR in _types(res)
+
+
+def _complete_config():
+    return draft.skeleton(
+        name="ACME Prospect Scanner", vertical="auto parts",
+        lead_type="B",  # organizations.lead_type ENUM (A / B / MIXED)
+        product_description="desc", type_="customer",
+    )
+
+
+def test_model_propose_section_emits_state_delta():
+    model = FakeChatModel(ModelDecision(
+        action="propose_section", message="Proposed discovery.",
+        phase="discovery", section={"rules": [{"context_ref": "lookalike_sources"}]},
+    ))
+    res = handle_turn(_continuation({"geography": True}), model=model)
+    types = _types(res)
+    assert EventType.STATE_DELTA in types
+    delta = res.emitter.wire_events()[types.index(EventType.STATE_DELTA)]["delta"]
+    # Envelope-rooted, NOT "/discovery": the patch must apply to the same
+    # {draftConfig, acceptance} envelope we emit in STATE_SNAPSHOT.
+    assert any(op["path"] == "/draftConfig/discovery" for op in delta)
+    assert not any(op["path"].startswith("/discovery") for op in delta)
+    assert res.emitter.wire_events()[-1]["result"]["phase"] == "discovery"
+
+
+def test_emitted_delta_applies_to_the_envelope_we_snapshot():
+    """The invariant that actually matters: our own two state events must agree.
+
+    STATE_SNAPSHOT emits the envelope `{draftConfig, acceptance}`; STATE_DELTA
+    emits an RFC 6902 patch against that same envelope. They were rooted
+    differently — the delta read `/geography/scope`, which cannot be applied to
+    the envelope at all ("member 'geography' not found") — and nothing on the wire
+    declared the difference. It stayed invisible because R2's pipe is unbuilt, so
+    nobody had ever applied one. Asserting the composition, not the string.
+    """
+    import jsonpatch
+
+    kickoff = handle_turn(_kickoff_payload(organization_name="ACME", vertical="auto parts"))
+    envelope = kickoff.emitter.wire_events()[4]["snapshot"]
+    assert set(envelope) == {"draftConfig", "acceptance"}
+
+    model = FakeChatModel(ModelDecision(
+        action="propose_section", message="Proposed geography.",
+        phase="geography", section={"scope": {"context_ref": "home_markets"}},
+    ))
+    res = handle_turn(
+        _continuation({}, draft_config=envelope["draftConfig"]), model=model
+    )
+    types = _types(res)
+    delta = res.emitter.wire_events()[types.index(EventType.STATE_DELTA)]["delta"]
+
+    applied = jsonpatch.apply_patch(envelope, delta, in_place=False)
+    assert applied["draftConfig"]["geography"] == {"scope": {"context_ref": "home_markets"}}
+    # Acceptance is a SIBLING and must not be disturbed by a config revision.
+    assert applied["acceptance"] == envelope["acceptance"]
+    # And nothing leaked to the envelope root.
+    assert "geography" not in applied
+
+
+def test_emitted_envelope_conforms_to_contract_4_before_and_after_a_delta():
+    """Both state events must satisfy the ratified envelope contract.
+
+    The round-trip test above proves our two events agree with EACH OTHER; this
+    proves they agree with the gateway's published shape, which is the half that
+    self-consistency cannot cover — our pre-`7f88631` wire was self-consistent
+    in the frontend's shape sense too, and every gate was green in three repos.
+    """
+    from app.skill_builder.validator import validate_state_envelope
+
+    kickoff = handle_turn(_kickoff_payload(organization_name="ACME", vertical="auto parts"))
+    envelope = kickoff.emitter.wire_events()[4]["snapshot"]
+    assert validate_state_envelope(envelope) == []
+
+    model = FakeChatModel(ModelDecision(
+        action="propose_section", message="Proposed geography.",
+        phase="geography", section={"scope": {"context_ref": "home_markets"}},
+    ))
+    res = handle_turn(_continuation({}, draft_config=envelope["draftConfig"]), model=model)
+    types = _types(res)
+    delta = res.emitter.wire_events()[types.index(EventType.STATE_DELTA)]["delta"]
+
+    import jsonpatch
+
+    # The applied result is what the gateway persists, so it has to conform too.
+    applied = jsonpatch.apply_patch(envelope, delta, in_place=False)
+    assert validate_state_envelope(applied) == []
+
+
+def test_contract_4_rejects_the_two_shapes_this_feature_actually_shipped():
+    """Negative control — otherwise the conformance test above proves nothing.
+
+    Contract #4's root is `additionalProperties: true`, so a validator that
+    checked nothing but openness would pass every dict. These are the two real
+    wrong shapes: frontend's pre-correction draft state, and a bare config
+    (what our own emitter's pointers implied the envelope was).
+    """
+    from app.skill_builder.validator import validate_state_envelope
+
+    frontend_pre_correction = {"metadata": {"name": "x"}, "phases": {"geography": {}}}
+    bare_config = {"version": "1.0", "geography": {"scope": {}}}
+    for bad in (frontend_pre_correction, bare_config):
+        issues = validate_state_envelope(bad)
+        assert issues, bad
+        assert any("draftConfig" in i.message for i in issues), issues
+
+
+def test_reroot_rewrites_from_as_well_as_path():
+    """`move` / `copy` ops carry a `from` pointer that must also be re-rooted.
+
+    Re-rooting only `path` would leave `from` addressing the envelope root, so the
+    op would read outside `draftConfig` — a silent wrong-source copy rather than
+    an error.
+    """
+    from app.skill_builder.protocol.agui import reroot_config_patch
+
+    out = reroot_config_patch([{"op": "move", "from": "/discovery", "path": "/scoring"}])
+    assert out == [{"op": "move", "from": "/draftConfig/discovery",
+                    "path": "/draftConfig/scoring"}]
+
+
+def test_model_invalid_section_does_not_emit_delta():
+    # A phase not in the schema → set_section adds an unknown top-level key →
+    # invalid → repair path, no STATE_DELTA.
+    model = FakeChatModel(ModelDecision(
+        action="propose_section", message="bad", phase="not_a_phase", section={},
+    ))
+    res = handle_turn(_continuation({"geography": True}), model=model)
+    assert EventType.STATE_DELTA not in _types(res)
+    assert res.emitter.wire_events()[-1]["type"] == EventType.RUN_FINISHED
+
+
+def test_model_request_test_run_emits_tool_call_when_config_complete():
+    model = FakeChatModel(ModelDecision(action="request_test_run", message="Let's test."))
+    res = handle_turn(
+        _continuation({"geography": True}, draft_config=_complete_config()), model=model
+    )
+    types = _types(res)
+    assert EventType.TOOL_CALL_START in types
+    assert res.emitter.wire_events()[-1]["result"]["outcome"] == "tool_call"
+
+
+def test_model_connect_existing_interrupts_with_slug():
+    model = FakeChatModel(ModelDecision(
+        action="connect_existing", message="Connect it.", slug="auto-parts-prospect-scanner",
+    ))
+    res = handle_turn(_continuation({}), model=model)
+    finished = res.emitter.wire_events()[-1]
+    assert finished["result"]["step"] == "connect"
+    assert finished["result"]["match_slug"] == "auto-parts-prospect-scanner"
+
+
+def test_model_await_human_interrupts():
+    model = FakeChatModel(ModelDecision(
+        action="await_human", message="Which market matters most?",
+        interrupt_reason="awaiting_decision",
+    ))
+    res = handle_turn(_continuation({}), model=model)
+    assert res.emitter.wire_events()[-1]["result"]["reason"] == "awaiting_decision"
+
+
+def test_continuation_without_model_uses_deterministic_fallback():
+    # No model injected → still a clean turn (plumbing testable per §15).
+    res = handle_turn(_continuation({"geography": True}))
+    finished = res.emitter.wire_events()[-1]
+    assert finished["result"]["reason"] == "awaiting_phase_acceptance"
+    assert finished["result"]["phase"] == "discovery"
+
+
+def test_empty_context_still_completes_a_turn():
+    # Wrong-org signal path: no org data at all still yields a clean turn.
+    res = handle_turn(_kickoff_payload())
+    assert _types(res)[0] == EventType.RUN_STARTED
+    assert _types(res)[-1] == EventType.RUN_FINISHED
+    assert "unknown" in res.emitter.wire_events()[2]["delta"]
