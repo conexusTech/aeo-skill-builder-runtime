@@ -406,3 +406,84 @@ def test_empty_context_still_completes_a_turn():
     assert _types(res)[0] == EventType.RUN_STARTED
     assert _types(res)[-1] == EventType.RUN_FINISHED
     assert "unknown" in res.emitter.wire_events()[2]["delta"]
+
+
+def test_phase_task_says_revise_and_warns_about_wholesale_replacement():
+    """A re-opened section must be REVISED, not rebuilt.
+
+    `set_section` replaces `config[phase]` wholesale, so a model that reads
+    "propose" on a section that already has a body discards what the operator
+    settled. The turn still succeeds and the config is still valid, so only
+    someone who remembers the old body would ever notice.
+
+    Raised by aeo-frontend in thread #24: once per-section change-requests are
+    enabled, an accepted section's flag is cleared and it returns through
+    `next_open_phase()`. An operator asking for one wording tweak would get the
+    whole section rebuilt — worse than the bug that flow exists to fix.
+    """
+    from app.skill_builder.runtime import _phase_task
+    from app.skill_builder.state import BuilderState
+
+    populated = BuilderState.model_validate(
+        {"draftConfig": {"geography": {"targeting": {"geo_strictness": "metro"}}}}
+    )
+    task = _phase_task(populated, "geography")
+    assert "REVISE" in task
+    # The *reason* has to travel with the instruction: "revise" alone does not tell
+    # the model that omission deletes.
+    assert "omit" in task and "deleted" in task
+
+
+def test_phase_task_says_propose_for_a_section_with_no_body_yet():
+    """`skeleton()` seeds every phase as {} — emptiness, not the acceptance flag,
+    is what distinguishes "never authored" from "authored and re-opened"."""
+    from app.skill_builder.runtime import _phase_task
+    from app.skill_builder.state import BuilderState
+
+    empty = BuilderState.model_validate({"draftConfig": {"geography": {}}})
+    assert _phase_task(empty, "geography") == "Propose the 'geography' section."
+    assert "REVISE" not in _phase_task(empty, "geography")
+
+
+def test_continue_actually_sends_the_revise_instruction_to_the_model():
+    """The call site, not just `_phase_task`.
+
+    🔴 Added because the first version of these tests DID NOT CATCH a mutation that
+    reverted `_continue` to the old ambiguous `"Propose or revise …"` string. They
+    asserted `_phase_task` in isolation, so the helper was correct and unused and
+    every test still passed — the precise failure this repo has a standing note
+    about: mutation-test the guard, not the unit.
+
+    Asserts on the prompt the model is actually handed.
+    """
+    seen: dict[str, str] = {}
+
+    class _CapturePrompt(FakeChatModel):
+        def decide(self, *, prompt, **kwargs):
+            seen["rendered"] = prompt.render()
+            return ModelDecision(action="await_human", message="ok")
+
+    handle_turn(
+        _continuation(
+            {},  # nothing accepted -> geography is the open phase
+            draft_config={"geography": {"targeting": {"geo_strictness": "metro"}}},
+        ),
+        model=_CapturePrompt(None),
+    )
+    assert "REVISE the existing 'geography' section" in seen["rendered"]
+    assert "Propose or revise" not in seen["rendered"]
+
+
+def test_continue_sends_propose_when_the_section_is_still_empty():
+    seen: dict[str, str] = {}
+
+    class _CapturePrompt(FakeChatModel):
+        def decide(self, *, prompt, **kwargs):
+            seen["rendered"] = prompt.render()
+            return ModelDecision(action="await_human", message="ok")
+
+    handle_turn(
+        _continuation({}, draft_config={"geography": {}}), model=_CapturePrompt(None)
+    )
+    assert "Propose the 'geography' section." in seen["rendered"]
+    assert "REVISE" not in seen["rendered"]

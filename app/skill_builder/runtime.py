@@ -196,7 +196,7 @@ def _continue(
     phase = state.next_open_phase()
     composition = compose(
         customer_context=ctx,
-        task=f"Propose or revise the '{phase}' section.",
+        task=_phase_task(state, phase),
         tools=contracts.tool_schemas(),
         context_field_keys=contracts.context_field_keys(),
         config_positions=contracts.config_positions(),
@@ -227,6 +227,38 @@ def _continue(
         emitter.record_usage(decision.usage)
     _apply_decision(emitter, state, decision, open_phase=phase)
     return composition.render()
+
+
+def _phase_task(state: BuilderState, phase: str | None) -> str:
+    """The per-turn instruction for the open phase — REVISE vs PROPOSE, explicitly.
+
+    This used to be one string, `"Propose or revise the '<phase>' section."`, which
+    left the choice to the model on every turn. That is fine for a section with no
+    body yet and actively harmful for one being re-opened, because `set_section`
+    REPLACES `config[phase]` wholesale: a model that reads "propose" and writes a
+    fresh section discards everything the operator already settled there.
+
+    The case is real rather than theoretical (aeo-frontend, thread #24). Once
+    per-section change-requests are enabled, an accepted section can have its flag
+    cleared and come back through `next_open_phase()`. An operator asking for one
+    wording tweak would get the whole section rebuilt — worse than the bug that
+    change flow exists to fix, and invisible: the turn succeeds, the config is
+    valid, and only someone who remembers the old body would notice.
+
+    A non-empty body is the signal, not the acceptance flag. `skeleton()` seeds
+    every phase as `{}`, so emptiness distinguishes "never authored" from
+    "authored and re-opened" without needing to know why it re-opened.
+    """
+    if phase is None:
+        return "All sections are accepted; do not propose another."
+    if state.draft_config.get(phase):
+        return (
+            f"REVISE the existing '{phase}' section. It already has content the "
+            "operator settled. Change only what their latest message asks for and "
+            "carry everything else through unchanged — your section replaces the "
+            "previous one wholesale, so anything you omit is deleted."
+        )
+    return f"Propose the '{phase}' section."
 
 
 def _apply_decision(
