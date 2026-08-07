@@ -1,56 +1,17 @@
-# ✅ FULFILLED 2026-08-07 — plus ONE follow-up statement still needed
+# ✅ FULFILLED 2026-08-07 — CLOSED. Do not re-send this document.
 
 > **The role was created and it works.** `AmazonBedrockAgentCoreAEOSkillBuilderRole`
-> exists, verbatim as requested, and the runtime deployed and reached `READY` on the
-> first attempt:
+> exists, verbatim as requested — all 10 statements, correct role and policy names, no
+> drift — and the runtime deployed and reached `READY` on the first attempt:
+>
 > `arn:aws:bedrock-agentcore:us-east-1:082585646836:runtime/aeo_skill_builder-MQ0z2m8tqB`
 >
-> **Do not re-send the whole request below.** It is kept as the record of what was
-> granted. What follows is the one thing it turned out to be missing.
-
-## 🔴 Follow-up: one statement to add — `bedrock-mantle`
-
-Driving a real model turn through the deployed runtime returned:
-
-```
-User: arn:aws:sts::082585646836:assumed-role/AmazonBedrockAgentCoreAEOSkillBuilderRole/…
-is not authorized to perform: bedrock-mantle:CreateInference
-on resource: arn:aws:bedrock-mantle:us-east-1:082585646836:project/default
-```
-
-**`bedrock-mantle` is a third distinct service** — not `bedrock`, not
-`bedrock-agentcore`. Our client is the Anthropic SDK's Mantle client, which calls
-`bedrock-mantle:CreateInference`; the `bedrock:InvokeModel` we were granted is never
-called on this path. That is our miss, not yours: we asked for the wrong service.
-
-We are asking for the **action wildcard, scoped to the project resource**:
-
-```json
-{
-  "Sid": "InvokeViaMantleWhichIsADifferentService",
-  "Effect": "Allow",
-  "Action": "bedrock-mantle:*",
-  "Resource": "arn:aws:bedrock-mantle:us-east-1:082585646836:project/*"
-}
-```
-
-The wildcard is deliberate and we would rather justify it than guess again:
-`bedrock-mantle` has **no public botocore service model**, so its action set cannot be
-enumerated — we know `CreateInference` only because an error named it, and a streaming
-turn or a token count may well call siblings we cannot predict. A grant on a
-*not-quite-right* action denies byte-for-byte identically to no grant at all, so each
-guess costs another round trip with you. Resource, region and account stay scoped.
-
-⚠️ **`put-role-policy` REPLACES the whole inline policy — it does not merge.** Please
-apply the **complete** updated document (all 11 statements) from
-`docs/policy-skillbuilder-runtime.json`, not just the statement above:
-
-```bash
-aws iam put-role-policy \
-  --role-name AmazonBedrockAgentCoreAEOSkillBuilderRole \
-  --policy-name AEOSkillBuilderRuntimePolicy \
-  --policy-document file://policy-skillbuilder-runtime.json
-```
+> Kept only as the record of what was granted and why.
+>
+> ➡️ **There IS a follow-up, and it is a separate document:
+> [`admin-request-2-mantle.md`](admin-request-2-mantle.md)** — one additional statement
+> on this same role, for the `bedrock-mantle` service. Deliberately split out so nobody
+> re-runs the request below while looking for the new one.
 
 ---
 
