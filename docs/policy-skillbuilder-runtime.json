@@ -11,7 +11,7 @@
       ],
       "Resource": [
         "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
-        "arn:aws:bedrock:us-east-1:082585646836:inference-profile/us.anthropic.claude-*"
+        "arn:aws:bedrock:*:082585646836:inference-profile/us.anthropic.claude-*"
       ]
     },
     {

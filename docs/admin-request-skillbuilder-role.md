@@ -21,6 +21,32 @@ created on 2026-07-31. The trust policy is identical in shape. The permission po
 is the same one with the browser and Secrets Manager statements **removed** and
 Bedrock model invocation **added**.
 
+## Why these permissions, and why they are safe to grant as written
+
+**They are copied from a role you already created and one that already works.** The
+trust policy is the same shape as
+`AmazonBedrockAgentCoreAEOGroundTruthBrowserRole` (yours, 2026-07-31). The Bedrock
+statement is modelled on the **working** `AgentCore-aeoskills-produ-ApplicationAgentAeoAvLead-…`
+execution role, which invokes models in this account today — deliberately, so this is
+not a new permission shape anyone has to reason about from scratch.
+
+Where we differ from that working role, we are **narrower**, not wider:
+
+| | This request | The existing working role |
+|---|---|---|
+| foundation-model | `…/anthropic.claude-*` | `…/*` (any model) |
+| inference-profile | `…/us.anthropic.claude-*` | `…/*` (any model) |
+
+The one place we deliberately match it rather than tightening is the **region wildcard
+on the inference-profile ARN**. Cross-region inference profiles (the `us.` prefix) route
+across regions, and pinning the ARN to `us-east-1` risks a denial that looks identical to
+the grant never landing — while `iam:PutRolePolicy` is denied to us, so correcting it
+would cost a second round trip with you. The account scope (`082585646836`) still applies.
+
+**No `aws-marketplace:*` is requested**, deliberately: the existing working role carries
+none, which confirms model access on this account is account-level state rather than a
+role grant. See the optional ask at the bottom.
+
 ## Three things that matter
 
 1. **Please keep the role name exactly `AmazonBedrockAgentCoreAEOSkillBuilderRole`.**
@@ -66,7 +92,7 @@ cat > /tmp/skillbuilder-runtime.json <<'JSON'
       ],
       "Resource": [
         "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
-        "arn:aws:bedrock:us-east-1:082585646836:inference-profile/us.anthropic.claude-*"
+        "arn:aws:bedrock:*:082585646836:inference-profile/us.anthropic.claude-*"
       ]
     },
     {
