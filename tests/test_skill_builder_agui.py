@@ -148,3 +148,27 @@ def test_none_fields_excluded_from_wire():
     em = AGUIEmitter()
     em.run_finished()
     assert "result" not in em.wire_events()[0]
+
+
+def test_last_user_text_returns_operator_text_on_the_kickoff_turn():
+    """Pins the semantics whose docstring was wrong until 2026-08-07.
+
+    `is_kickoff` means "no ASSISTANT message yet", not "no messages at all", so an
+    operator who types on the very first turn is on the kickoff path AND has a user
+    message. The old docstring said "None on kickoff", encoding the same false
+    premise that produced a gateway defect in thread #24 — there it gated the R13
+    catalog on `messages.length === 0`, so a first-turn typer got "no existing
+    skill" for every customer while looking healthy.
+
+    Asserted together deliberately: the point is that both are true at once.
+    """
+    from app.skill_builder.protocol.agui import RunAgentInput
+
+    typed_first = RunAgentInput.model_validate(
+        {"messages": [{"role": "user", "content": "build me an HVAC scanner"}]}
+    )
+    assert typed_first.is_kickoff is True
+    assert typed_first.last_user_text() == "build me an HVAC scanner"
+
+    # The genuinely-empty kickoff is the only case that yields None.
+    assert RunAgentInput.model_validate({"messages": []}).last_user_text() is None

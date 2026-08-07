@@ -143,7 +143,21 @@ class RunAgentInput(BaseModel):
         return not any(m.role == "assistant" for m in self.messages)
 
     def last_user_text(self) -> str | None:
-        """Text of the most recent user message, or None on kickoff."""
+        """Text of the most recent user message; None if there are no user messages.
+
+        ⚠️ **Not "None on kickoff"**, which is what this said until 2026-08-07 and is
+        the same false premise that produced a defect in the gateway (thread #24):
+        *kickoff* means no ASSISTANT message yet, so an operator who types on the very
+        first turn is on the kickoff path AND has a user message. This returns their
+        text there.
+
+        **No production caller today.** `_kickoff` deliberately ignores the operator's
+        first message and emits the deterministic opener, because that path must run
+        without a model. Kept rather than deleted precisely because it is the tool
+        someone would reach for when improving that case — and it had to stop
+        describing behaviour it does not have before then, since a wrong contract on
+        an unused helper is worse than no helper.
+        """
         for msg in reversed(self.messages):
             if msg.role == "user":
                 return msg.content if isinstance(msg.content, str) else None
