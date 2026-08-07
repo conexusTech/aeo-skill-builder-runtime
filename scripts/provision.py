@@ -273,6 +273,12 @@ def main() -> int:
     container_uri = f"{repo_uri}:{image_tag()}" if repo_uri else ""
     if not args.skip_push and repo_uri:
         container_uri = build_and_push(repo_uri)
+    elif args.skip_push and image_tag() == "unknown":
+        # --skip-push deploys by TAG rather than by digest, so an unresolvable tag
+        # would build a URI that cannot exist and fail deep inside CreateAgentRuntime
+        # as an image-resolution error. Refuse up front instead.
+        print("[image] --skip-push needs a git HEAD to name an existing tag; none found.")
+        return 2
 
     blockers = [
         name

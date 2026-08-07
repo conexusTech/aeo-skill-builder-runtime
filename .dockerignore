@@ -1,0 +1,16 @@
+# The build context is sent to the Docker daemon in full, so anything not excluded
+# here is transferred on every build even though the Dockerfile only COPYs `app`.
+# .venv alone is a few hundred megabytes of host-platform (amd64) wheels that would
+# be useless in an arm64 image even if they were copied.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.git/
+.env
+
+# Not needed to build or run the runtime.
+tests/
+docs/
+scripts/
+README.md

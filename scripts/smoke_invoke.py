@@ -32,9 +32,6 @@ from botocore.config import Config as BotoConfig
 
 REGION = "us-east-1"
 
-#: Events every turn must produce, in order, regardless of path.
-REQUIRED_BOOKENDS = ("RUN_STARTED", "RUN_FINISHED")
-
 #: A turn that ends in RUN_ERROR is a legitimate outcome (a model refusal, say), so it
 #: is accepted as a terminal event — but reported loudly rather than counted as a pass.
 TERMINAL = ("RUN_FINISHED", "RUN_ERROR")
@@ -159,9 +156,23 @@ def main() -> int:
         problems.append(f"first event is {kinds[0]!r}, expected RUN_STARTED")
     if kinds[-1] not in TERMINAL:
         problems.append(f"last event is {kinds[-1]!r}, expected one of {TERMINAL}")
-    for required in REQUIRED_BOOKENDS:
-        if required not in kinds and required != "RUN_FINISHED":
-            problems.append(f"missing {required}")
+    # A message must be opened and closed in order. This is the check the earlier
+    # REQUIRED_BOOKENDS loop pretended to be: that loop's only reachable branch was
+    # "RUN_STARTED absent", which the first check above already catches, and it
+    # skipped RUN_FINISHED outright — so it could never report anything new. Dead
+    # code shaped like a guard is worse than no guard, because the file reads as
+    # though the sequence is validated more thoroughly than it is.
+    depth = 0
+    for kind in kinds:
+        if kind == "TEXT_MESSAGE_START":
+            depth += 1
+        elif kind == "TEXT_MESSAGE_END":
+            depth -= 1
+            if depth < 0:
+                problems.append("TEXT_MESSAGE_END without a matching START")
+                break
+    if depth > 0:
+        problems.append(f"{depth} TEXT_MESSAGE_START never closed")
 
     if problems:
         print("=== FAILED ===")
