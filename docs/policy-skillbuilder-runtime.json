@@ -15,6 +15,12 @@
       ]
     },
     {
+      "Sid": "InvokeViaMantleWhichIsADifferentService",
+      "Effect": "Allow",
+      "Action": "bedrock-mantle:*",
+      "Resource": "arn:aws:bedrock-mantle:us-east-1:082585646836:project/*"
+    },
+    {
       "Sid": "EcrTokenCannotBeScoped",
       "Effect": "Allow",
       "Action": "ecr:GetAuthorizationToken",
