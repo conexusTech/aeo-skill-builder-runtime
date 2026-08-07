@@ -17,7 +17,19 @@
     {
       "Sid": "InvokeViaMantleWhichIsADifferentService",
       "Effect": "Allow",
-      "Action": "bedrock-mantle:*",
+      "Action": [
+        "bedrock-mantle:CreateInference",
+        "bedrock-mantle:GetInference",
+        "bedrock-mantle:CancelInference",
+        "bedrock-mantle:GetProject",
+        "bedrock-mantle:ListProjects",
+        "bedrock-mantle:ListModels",
+        "bedrock-mantle:GetModel",
+        "bedrock-mantle:CreateFile",
+        "bedrock-mantle:GetFile",
+        "bedrock-mantle:ListFiles",
+        "bedrock-mantle:ListTagsForResource"
+      ],
       "Resource": "arn:aws:bedrock-mantle:us-east-1:082585646836:project/*"
     },
     {
@@ -31,9 +43,10 @@
       "Effect": "Allow",
       "Action": [
         "ecr:BatchGetImage",
-        "ecr:GetDownloadUrlForLayer"
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchCheckLayerAvailability"
       ],
-      "Resource": "arn:aws:ecr:us-east-1:082585646836:repository/*"
+      "Resource": "arn:aws:ecr:us-east-1:082585646836:repository/aeo-groundtruth/skill-builder"
     },
     {
       "Sid": "LogGroups",

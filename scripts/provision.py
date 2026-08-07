@@ -35,9 +35,13 @@ ACCOUNT = "082585646836"
 #: `ecr:CreateRepository` everywhere else — including the `aeo-skill-*` repos that
 #: already exist. Verified 2026-08-07 by direct probe on both.
 #:
-#: The correctly-named `aeo-skill-builder` is filed as an OPTIONAL admin item in
-#: docs/admin-request-skillbuilder-role.md. If it ever lands, change this one constant
-#: and re-run: the runtime updates in place and keeps its ARN.
+#: 🔴 CHANGING THIS NOW ALSO NEEDS AN IAM CHANGE, which was not true when it was written.
+#: The administrator scoped the execution role's `PullTheRuntimeImage` statement to this
+#: exact repository ARN (it was `repository/*` as we requested — they tightened it, which
+#: is the better call). So flipping this constant to the correctly-named
+#: `aeo-skill-builder` would deploy a runtime that cannot pull its own image, and the
+#: failure would surface at container start rather than at `update-agent-runtime`.
+#: Move the repo and the policy in the same change, or not at all.
 ECR_REPO = "aeo-groundtruth/skill-builder"
 REPO_URI = f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/{ECR_REPO}"
 

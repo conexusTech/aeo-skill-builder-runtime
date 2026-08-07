@@ -1,4 +1,17 @@
-# Admin request #2 — add one statement to an existing role
+# ✅ FULFILLED 2026-08-07 — CLOSED. Do not re-send.
+
+> The `bedrock-mantle` statement was applied and it worked: the runtime now gets past
+> `CreateInference`. The administrator **enumerated** the eleven actions rather than
+> using the wildcard we asked for, which is the better call and is what
+> `policy-skillbuilder-runtime.json` now records.
+>
+> ➡️ **The next and final step is a separate document:**
+> [`request-3-model-subscription.md`](request-3-model-subscription.md) — one console
+> action, no IAM.
+
+---
+
+# Admin request #2 — add one statement to an existing role (ORIGINAL, FULFILLED)
 
 **Account:** `082585646836` · **Region:** `us-east-1` · **Requested by:** Leo Lindo
 
