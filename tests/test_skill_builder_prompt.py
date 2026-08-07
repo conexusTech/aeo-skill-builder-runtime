@@ -277,3 +277,37 @@ def test_a_schema_declaring_no_section_internals_raises():
         schema["properties"].pop(section, None)
     with pytest.raises(ValueError, match="declares no section internals"):
         _section_shapes_layer(schema)
+
+
+def test_agent_identity_ratifies_the_operator_action_vocabulary():
+    """The two free-text operator actions are TAUGHT, not merely tolerated.
+
+    Ratified with aeo-frontend in thread #24. They have three structured
+    controls; only two reach us as text, and until this landed the prompt said
+    nothing about either — so the model's handling was "it will probably
+    understand", which is the failure mode this feature keeps producing: works
+    in every demo, fails intermittently in production, no error anywhere.
+
+    Asserting the exact strings here is the point. They live in the frontend's
+    code too, and a vocabulary taught in one repo and validated in none is the
+    pattern behind most of the cross-repo defects on this feature.
+    """
+    from app.skill_builder.prompt import AGENT_IDENTITY
+
+    assert "Don't reuse that skill — build a new one." in AGENT_IDENTITY
+    assert "For the <Section> section: <note>" in AGENT_IDENTITY
+
+
+def test_prompt_forbids_inferring_acceptance_from_operator_text():
+    """Acceptance is structural, and the prompt must say so.
+
+    `BuilderState.next_open_phase()` reads ONLY the acceptance map, so a
+    section's acceptance is decided by the gateway's flag and never by what the
+    operator typed. Without this instruction a model could announce a section
+    accepted on the strength of a sentence — plausible, unfalsifiable from the
+    transcript, and diverging from the state that actually gates finalize.
+    """
+    from app.skill_builder.prompt import AGENT_IDENTITY
+
+    assert "ACCEPTANCE IS NOT A MESSAGE" in AGENT_IDENTITY
+    assert "never as text" in AGENT_IDENTITY
