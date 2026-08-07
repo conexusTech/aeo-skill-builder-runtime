@@ -11,7 +11,8 @@ other, so please do them together.
 > worked: the runtime deployed and reached `READY` first attempt. That request is closed
 > and lives in `admin-request-skillbuilder-role.md` purely as a record.
 >
-> **This is a separate, smaller ask: one additional statement on that same role.**
+> **This is a separate ask.** Part 1 adds one statement to that same role; Part 2
+> enables the model on the account. Nothing here re-does request #1.
 
 ## Part 1 — the IAM statement
 
@@ -172,11 +173,6 @@ aws iam put-role-policy \
 **Do not create a new role and do not rename the policy** — both names above must stay
 exactly as they are, for the same reasons as request #1.
 
-## Nothing to send back
-
-We can read the role (`iam:GetRolePolicy` is granted), so we will verify it ourselves
-and redeploy. A one-line "done" is enough.
-
 ## 🔴 Part 2 — the IAM statement alone will NOT be enough. Please do this too.
 
 We probed this directly after writing the section above, and it upgraded from "possibly
@@ -220,3 +216,8 @@ one narrow action.
 
 **Order matters:** form → subscribe → then the `bedrock-mantle` statement is what makes
 it usable. All three can be done in one sitting.
+
+## Nothing to send back
+
+We can read the role (`iam:GetRolePolicy` is granted), so we will verify it ourselves
+and redeploy. A one-line "done" is enough.
