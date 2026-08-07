@@ -18,4 +18,13 @@ jsonpatch==1.33
 #
 # ⚠️ Do not grep for `import anthropic` to decide whether this is used: every import
 # here is of the `from anthropic import X` form, which does not contain that string.
-anthropic==0.120.0
+#
+# 🔴 THE `[bedrock]` EXTRA IS LOAD-BEARING — it pulls boto3/botocore, which
+# AnthropicBedrockMantle needs for SigV4 signing. Without it the FIRST model-backed
+# turn dies with `ModuleNotFoundError: No module named 'botocore'`, and it did:
+# this file originally said plain `anthropic==0.120.0`, derived by grepping the
+# package's import statements. botocore appears in no import here — it is a
+# transitive runtime need of the Bedrock client — so the grep could not have found
+# it. In aeo-agent-service the gap was invisible because boto3 was a direct
+# dependency there for the geo-local ground-truth work.
+anthropic[bedrock]==0.120.0

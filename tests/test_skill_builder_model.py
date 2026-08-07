@@ -60,3 +60,29 @@ def test_parse_wire_decision_without_section_json():
     d = _parse_wire_decision('{"action": "await_human", "message": "waiting"}')
     assert d.section is None
     assert d.action == "await_human"
+
+
+def test_bedrock_client_dependencies_are_installed():
+    """The Bedrock client's import chain must resolve in the deployed image.
+
+    🔴 This is a REGRESSION TEST for a defect that reached production. The first
+    model-backed turn against the live runtime died with
+    `ModuleNotFoundError: No module named 'botocore'`: requirements.txt declared
+    plain `anthropic`, not `anthropic[bedrock]`, so boto3/botocore — which
+    AnthropicBedrockMantle needs for SigV4 signing — were absent.
+
+    Nothing caught it. Every other test injects `FakeChatModel`, so the real
+    client's import chain was never executed; and the dependency is invisible to
+    import-grepping because botocore appears in no import statement here. It is a
+    transitive runtime need of the client, not of our code.
+
+    Constructing the client makes NO network call, so this is a pure import-chain
+    check and stays fast and offline. It deliberately does not assert on
+    credentials or region: a wrong model id or a missing marketplace subscription
+    must surface as an in-stream RUN_ERROR at turn time, not as a test failure
+    here — that distinction is the whole reason `/ping` does not resolve the model.
+    """
+    from anthropic import AnthropicBedrockMantle  # noqa: F401
+
+    import boto3  # noqa: F401
+    import botocore  # noqa: F401
