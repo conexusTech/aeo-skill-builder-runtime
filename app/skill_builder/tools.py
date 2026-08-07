@@ -11,10 +11,11 @@ executes, returning the result as subsequent input:
     connect + notify + link evidence). Production scans stay blocked pending the
     existing SU activation step; the agent adds no activation authority.
     NOTE: the created skill's status is `tested` ONLY when the session has a real
-    test run behind it, and `configured` otherwise — so while R6 is blocked every
-    finalize lands `configured`. Do not restate `tested` as the outcome here or in
-    any operator-facing message; three repos shipped that claim and all three
-    corrected it on 2026-08-04.
+    test run behind it, and `configured` otherwise. Do not restate `tested` as the
+    outcome here or in any operator-facing message; three repos shipped that claim
+    and all three corrected it on 2026-08-04. R6 SHIPPED on the gateway 2026-08-05,
+    so both statuses are now reachable — which makes naming either one worse, not
+    better, since the outcome depends on session history we cannot see from here.
 
 Two halves:
   1. Emit (agent → gateway): validate the draftConfig (require_complete — you
@@ -261,14 +262,19 @@ def handle_tool_result(emitter: AGUIEmitter, result: ToolResult) -> None:
     # scans stay blocked pending the SU activation step (PRD §8) — we say so.
     #
     # Deliberately names NO status. This message used to promise `tested`, which
-    # the gateway's finalize does not produce: it sets `tested` only when the
-    # session has a real test run and `configured` otherwise, and since R6 is
-    # blocked every finalize today lands `configured`. So the sentence was already
-    # false for every real outcome. Frontend shipped the identical claim in two
-    # places and backend's tool description in a third, all corrected on
-    # 2026-08-04 — three repos asserting one status nobody had checked. Reporting
-    # the facts we actually know (created, connected, activation pending) needs no
-    # status at all, so there is nothing here to go stale when R6 lands.
+    # the gateway's finalize sets only when the session has a real test run behind
+    # it, and `configured` otherwise. When that was written R6 was blocked, so
+    # every finalize landed `configured` and the sentence was false for EVERY real
+    # outcome. Frontend shipped the identical claim in two places and backend's
+    # tool description in a third, all corrected on 2026-08-04 — three repos
+    # asserting one status nobody had checked.
+    #
+    # R6 shipped 2026-08-05, so both statuses are reachable now. That does not
+    # make naming one safe again: which one you get depends on whether this
+    # session ran a test, which is gateway-side state this runtime never sees.
+    # Reporting only what we actually know (created, connected, activation
+    # pending) needed no status then and needs none now — which is why R6 landing
+    # required no change here.
     emitter.message(
         "Done — the skill has been created and connected to the org. Its status "
         "reflects whether a passing test run backed it. Production scans stay "
