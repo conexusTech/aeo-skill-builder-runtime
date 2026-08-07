@@ -1,20 +1,15 @@
-# Admin request #2 — one IAM statement + enable Claude Sonnet 5
+# Admin request #2 — add one statement to an existing role
 
 **Account:** `082585646836` · **Region:** `us-east-1` · **Requested by:** Leo Lindo
-
-**Two parts, both needed, both in this document.** Part 1 is an IAM statement on an
-existing role. Part 2 is enabling the model on the account. Neither works without the
-other, so please do them together.
 
 > ✅ **Request #1 is DONE — nothing to redo.** You created
 > `AmazonBedrockAgentCoreAEOSkillBuilderRole` earlier today, exactly as asked, and it
 > worked: the runtime deployed and reached `READY` first attempt. That request is closed
 > and lives in `admin-request-skillbuilder-role.md` purely as a record.
 >
-> **This is a separate ask.** Part 1 adds one statement to that same role; Part 2
-> enables the model on the account. Nothing here re-does request #1.
+> **This is a separate, smaller ask: one additional statement on that same role.**
 
-## Part 1 — the IAM statement
+## What is needed
 
 Add permission for the **`bedrock-mantle`** service to the existing inline policy
 `AEOSkillBuilderRuntimePolicy`:
@@ -172,74 +167,6 @@ aws iam put-role-policy \
 
 **Do not create a new role and do not rename the policy** — both names above must stay
 exactly as they are, for the same reasons as request #1.
-
-## 🔴 Part 2 — the IAM statement alone will NOT be enough. Please do this too.
-
-**If you have already been asked to enable Claude Sonnet 5, this section says exactly
-what is still outstanding and how to confirm it — please read it rather than skipping
-as done.** As of 2026-08-07 it is not yet in place.
-
-**The authoritative check, which anyone can run:**
-
-```bash
-aws bedrock get-foundation-model-availability \
-  --region us-east-1 --model-id anthropic.claude-sonnet-5
-```
-
-Today it returns:
-
-```json
-{
-  "modelId": "anthropic.claude-sonnet-5",
-  "agreementAvailability": { "status": "NOT_AVAILABLE" },   ← THE ONE THAT MATTERS
-  "authorizationStatus": "AUTHORIZED",
-  "entitlementAvailability": "AVAILABLE",
-  "regionAvailability": "AVAILABLE"
-}
-```
-
-**Three of the four are already green.** The region offers the model, the account is
-entitled to it, and authorization is in place. **The only gap is
-`agreementAvailability: NOT_AVAILABLE` — the AWS Marketplace agreement, i.e. the
-subscription itself.**
-
-✅ **Done means that field reads `AVAILABLE`.** That is the single check to run
-afterwards; please do not rely on the console appearing to have accepted something.
-
-**On the Anthropic use-case form — needed only if the console asks.** We report it
-because `aws bedrock get-use-case-for-model-access` says *"You have not filled out the
-request form"*, but `authorizationStatus` is already `AUTHORIZED`, so the two signals
-disagree and we cannot tell from outside whether the form is a hard prerequisite here.
-Treat the subscription as the goal and the form as a step only if the console blocks on
-it.
-
-**Why our own invocations cannot answer this**, in case they get quoted at you:
-`user/leo.lindo` holds neither `aws-marketplace:Subscribe` nor `ViewSubscriptions`, so
-every attempt returns a permissions error that looks the same whether a subscription
-exists or not. The availability API above is the only reliable signal we have.
-
-**The Mantle client attempts to subscribe on demand, at call time.** That is the part
-that matters for the role: once `bedrock-mantle:*` is granted, the runtime's role will
-reach exactly this same point and fail the same way — unless a subscription already
-exists.
-
-**What we are asking for: subscribe the account to `anthropic.claude-sonnet-5` once,
-in the Bedrock / Marketplace console.** Nothing else in Part 2.
-
-**And explicitly NOT `aws-marketplace:Subscribe` on the role.** That action cannot be
-scoped to a single model — the denial evaluates it on `resource: *` — so granting it
-would let our runtime subscribe the account to *any* marketplace product and bill for
-it. A one-time subscription by you removes the need for any principal to hold it.
-
-**Why the role still needs Part 1 even after you subscribe:** the Anthropic SDK's Mantle
-client establishes its subscription at call time, so it is the caller that gets denied.
-Once the agreement exists account-wide there is nothing left to establish, and the
-`bedrock-mantle:*` statement is what lets the runtime actually issue the inference. If
-it turns out to also need read-only `aws-marketplace:ViewSubscriptions`, we will come
-back for that one narrow action rather than pre-emptively asking for it.
-
-**Order:** subscribe first, then Part 1 — but both in one sitting is fine, since neither
-is usable without the other.
 
 ## Nothing to send back
 
