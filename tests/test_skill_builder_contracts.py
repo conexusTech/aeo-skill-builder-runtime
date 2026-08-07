@@ -38,7 +38,7 @@ def test_config_schema_is_the_ratified_contract():
     # "schema-valid" mean valid against a fiction.
     schema = contracts.config_schema()
     assert "RATIFIED" in schema["title"]
-    assert schema["required"] == ["version", "type", "run_parameters"]
+    assert schema["required"] == ["version", "run_parameters"]
     # Closed root envelope: a camelCase or typo'd key must fail loudly rather
     # than being accepted and silently dropped.
     assert schema["additionalProperties"] is False
@@ -46,6 +46,22 @@ def test_config_schema_is_the_ratified_contract():
     # the gateway strips before we see a config, so it is not ours to author.
     assert "execution_phases" in schema["properties"]
     assert "execution_phases" not in schema["required"]
+    # 🔴 `type` is declared but NOT required, since 2026-08-07 (thread #21).
+    #
+    # It was in `required` and we have never emitted it: `draft.skeleton()` accepts
+    # `type_` and its one caller (runtime.py:149) does not pass it, deliberately —
+    # the field is enum-constrained and the authoring rule is "omit what isn't known,
+    # never placeholder it". So STRICT validation rejected every draft we produce, at
+    # BOTH gates (test-run start and finalize). It survived because R2 did not exist,
+    # so no config of ours had ever reached a strict gate; backend found it by driving
+    # their new pipe against our container.
+    #
+    # Asserted rather than left implicit because this is the SECOND time this exact
+    # defect shipped on a neighbouring field — `execution_phases` above was the first,
+    # same cause, corrected in thread #07.1. Two instances is a pattern, so both
+    # now have a standing assertion.
+    assert "type" in schema["properties"]
+    assert "type" not in schema["required"]
 
 
 def test_context_field_keys_reads_the_flat_key_list():
