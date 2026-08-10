@@ -203,18 +203,23 @@ def _continue(
     """Continuation turn: propose the next open phase (model-driven), or — once
     all phases are accepted — offer a test run."""
     state = run_input.state
-    if state.all_phases_accepted():
-        emitter.message(
-            "All sections are accepted. When you're ready, ask me to run a test "
-            "against the draft config."
-        )
-        emitter.interrupt(InterruptReason.AWAITING_TEST_RUN)
-        return _system_prompt(ctx, task="All phases accepted — offer a test run.")
-
-    phase = state.next_open_phase()
+    # All-accepted is NOT a separate early return any more. It used to emit a
+    # canned "ask me to run a test" line and interrupt WITHOUT calling the model,
+    # so every later turn produced byte-identical output forever: the operator
+    # answering "yes, run a test" was never seen by anything that could act on
+    # it, and `TOOL_CALL_*` was structurally unreachable through conversation
+    # rather than merely unexercised (#27). Backend proved it from `usage` being
+    # absent on both turns — by contract that means no model ran.
+    #
+    # The message was also a promise the branch could not keep: it invited a
+    # request the code had no path to honour. And `request_test_run` /
+    # `request_finalize` exist as model ACTIONS, so short-circuiting here made
+    # that whole surface — and #13.7's divergence check with it — dead code.
+    all_accepted = state.all_phases_accepted()
+    phase = None if all_accepted else state.next_open_phase()
     composition = compose(
         customer_context=ctx,
-        task=_phase_task(state, phase),
+        task=_ALL_ACCEPTED_TASK if all_accepted else _phase_task(state, phase),
         tools=contracts.tool_schemas(),
         context_field_keys=contracts.context_field_keys(),
         config_positions=contracts.config_positions(),
@@ -223,12 +228,23 @@ def _continue(
     )
 
     if model is None:
-        # Deterministic fallback (no model wired) — acknowledge and interrupt.
-        emitter.message(
-            f"Got it. The next section to settle is '{phase}'. "
-            "I'll propose it, and you can accept or request changes."
-        )
-        emitter.interrupt(InterruptReason.AWAITING_PHASE_ACCEPTANCE, phase=phase)
+        # Deterministic fallback (no model wired). Preserved for both states so
+        # the runtime still serves a coherent stream with no model at all —
+        # which is what every sibling repo developed against before access
+        # landed. Note this path CANNOT emit TOOL_CALL_*, by design: a tool call
+        # is a real gateway side effect and must never come from a stub.
+        if all_accepted:
+            emitter.message(
+                "All sections are accepted. When you're ready, ask me to run a "
+                "test against the draft config."
+            )
+            emitter.interrupt(InterruptReason.AWAITING_TEST_RUN)
+        else:
+            emitter.message(
+                f"Got it. The next section to settle is '{phase}'. "
+                "I'll propose it, and you can accept or request changes."
+            )
+            emitter.interrupt(InterruptReason.AWAITING_PHASE_ACCEPTANCE, phase=phase)
         return composition.render()
 
     decision = model.decide(
@@ -245,6 +261,30 @@ def _continue(
         emitter.record_usage(decision.usage)
     _apply_decision(emitter, state, decision, open_phase=phase)
     return composition.render()
+
+
+#: Task for the all-sections-accepted state.
+#:
+#: Deliberately explicit that acting is allowed, because the previous
+#: deterministic branch could only ever repeat an invitation. It also has to say
+#: what NOT to do: nothing else stops a model from calling `request_test_run` on
+#: the turn that merely accepted the final section, and a test run is a real
+#: gateway side effect with real cost — it must follow from the operator asking,
+#: not from the state being reached.
+_ALL_ACCEPTED_TASK = (
+    "Every section is accepted, so authoring is done and there is no next "
+    "section to propose.\n"
+    "- If the operator has just asked you to run a test, choose "
+    "`request_test_run`.\n"
+    "- If they have asked you to finalize (and a test run has already "
+    "succeeded), choose `request_finalize`.\n"
+    "- If they have asked to change something, re-open that section with "
+    "`propose_section` for the phase they named.\n"
+    "- Otherwise choose `await_human` with interrupt_reason "
+    "`awaiting_test_run`, and tell them the draft is ready whenever they are.\n"
+    "Do NOT request a test run just because every section is accepted — a test "
+    "run costs real money and must follow from what the operator actually asked."
+)
 
 
 def _phase_task(state: BuilderState, phase: str | None) -> str:

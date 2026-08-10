@@ -589,3 +589,75 @@ def test_a_context_supplied_vertical_is_never_overwritten():
         for op in e["delta"]
     ]
     assert not any(op["path"] == "/draftConfig/vertical" for op in ops)
+
+
+# --- all sections accepted: the state that could never act (#27) ------------
+
+
+def _all_accepted(draft_config=None, user="ok"):
+    payload = _continuation(
+        {p: True for p in
+         ("geography", "discovery", "validation", "contacts", "scoring")},
+        draft_config=draft_config,
+        user=user,
+    )
+    return payload
+
+
+def _complete_draft():
+    return draft.skeleton(
+        name="ACME Prospect Scanner",
+        vertical="auto parts",
+        lead_type="B",
+        product_description="Prospect scanner for the auto parts vertical.",
+        type_="customer",
+    )
+
+
+def test_all_accepted_state_reaches_the_model():
+    """It used to short-circuit before `model.decide`, so every later turn was
+    byte-identical and the operator's "yes, run a test" was never seen by
+    anything that could act on it. Backend proved it from `usage` being absent
+    on both turns — by contract that means no model ran."""
+    seen = {}
+
+    class _Recording(FakeChatModel):
+        def decide(self, **kwargs):
+            seen["called"] = True
+            seen["open_phase"] = kwargs["open_phase"]
+            return ModelDecision(action="await_human", message="Ready when you are.")
+
+    handle_turn(_all_accepted(), model=_Recording(None))
+
+    assert seen.get("called"), "the model must be consulted once authoring is done"
+    assert seen["open_phase"] is None, "there is no next section to propose"
+
+
+def test_all_accepted_can_now_emit_a_tool_call():
+    """`TOOL_CALL_*` has never fired in any repo. This is the path that makes it
+    reachable: the operator asks, the model chooses `request_test_run`, and the
+    gateway executes it.
+
+    Uses a complete draft, because the tool gate legitimately blocks an
+    incomplete one — a test asserting emission on a config that could never
+    pass the gate would prove nothing.
+    """
+    model = FakeChatModel(ModelDecision(
+        action="request_test_run", message="Running a test now.",
+    ))
+    res = handle_turn(
+        _all_accepted(draft_config=_complete_draft(), user="yes, run a test"),
+        model=model,
+    )
+
+    assert EventType.TOOL_CALL_START in _types(res)
+    assert res.emitter.wire_events()[-2]["type"] == EventType.TOOL_CALL_END
+
+
+def test_all_accepted_without_a_model_still_serves_a_coherent_turn():
+    """The no-model path is what every sibling repo built against before model
+    access landed, and it must never emit a tool call — a gateway side effect
+    must not originate from a stub."""
+    res = handle_turn(_all_accepted())
+    assert EventType.TOOL_CALL_START not in _types(res)
+    assert res.emitter.wire_events()[-1]["result"]["reason"] == "awaiting_test_run"
