@@ -121,6 +121,54 @@
     "org_input_schema": {
       "description": "Per-org input field declarations. Two accepted shapes (array OR object-map) — normalized by normalizeOrgInputSchema. Kept permissive here.",
       "type": ["array", "object"]
+    },
+    "custom_modules": {
+      "type": "array",
+      "description": "PRD R11 — reviewed custom scoring modules. OFF at launch by decision D5: the scanner's loader returns [] unless SCANNER_CUSTOM_MODULES_ENABLED=true, so an absent or empty array is a no-op. Declared here anyway because the shape is already fixed by the scanner's pre-import gate (aeo/modules/loader.py REQUIRED_SPEC_FIELDS) — landing it now is what stops the schema and that gate from disagreeing later. Every field is REQUIRED and the item is CLOSED: a module spec is the input to a security decision, so a missing or misspelled field must be an error, never a default.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "path",
+          "sha256",
+          "api_version",
+          "reviewed_by",
+          "reviewed_at"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Stable identifier. Namespaces this module's signals (`<name>.<key>`) so two modules cannot overwrite each other, and the loader rejects a module whose own `name` disagrees with this one — otherwise signals would land under the wrong namespace."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "File path relative to the scanner's module directory. The loader enforces containment; a path escaping that directory is rejected before import."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "Hex digest of the file AS REVIEWED. Load-bearing, not hygiene: importing a Python module executes it, so there is no sandbox and the review record is the only real control. Without binding reviewed bytes to loaded bytes, `reviewed_by` attests to whatever the file said at review time."
+          },
+          "api_version": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The module API version this code was authored and reviewed against. A contract change invalidates prior reviews rather than silently running old code against new expectations."
+          },
+          "reviewed_by": {
+            "type": "string",
+            "minLength": 1,
+            "description": "User id or email of the human reviewer (PRD Q7). Exempt from R12: this is provenance for a security decision, not org-specific scan input, so it is a literal by design and must NOT become a context ref."
+          },
+          "reviewed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the review recorded above was performed."
+          }
+        }
+      }
     }
   },
   "additionalProperties": false,
