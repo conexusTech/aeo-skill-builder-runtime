@@ -292,3 +292,51 @@ def test_finalize_passes_with_a_vertical():
         em, _complete_config(), slug="auto-parts-prospect-scanner"
     )
     assert outcome.requested is True
+
+
+def test_a_blocked_tool_call_names_the_section_to_repair():
+    """#27 turn 10: the block interrupted with NO phase, so the operator saw
+    "something is wrong, somewhere". In the all-accepted state that is a dead
+    end — frontend's `canFinalize` needs `testSatisfied`, which a blocked test
+    run leaves false, so there is no enabled affordance either.
+    """
+    config = _complete_config()
+    config["discovery"] = {"sources": {"web": {
+        "name_field": "n", "fields": ["n"],
+        "queries": ["alternatives to {context_ref:competitors} in {market}"],
+    }}}
+
+    em = AGUIEmitter()
+    outcome = tools.request_test_run(em, config, notes="smoke")
+
+    assert outcome.requested is False
+    finished = em.wire_events()[-1]["result"]
+    # Reason stays within the CLOSED contract-#5 vocabulary; only phase is added.
+    assert finished["reason"] == "awaiting_phase_acceptance"
+    assert finished["phase"] == "discovery", "must name what to repair"
+
+
+def test_phase_is_derived_from_both_location_spellings():
+    """The schema validator emits `/discovery/...` while the lints emit
+    `discovery....`. Handling one spelling would return None for half the
+    issues — which IS the no-phase interrupt this fixes."""
+    from app.skill_builder.validator import ValidationIssue
+
+    pointer = [ValidationIssue(location="/contacts/titles", message="x")]
+    dotted = [ValidationIssue(location="scoring.weights.fit", message="x")]
+    indexed = [ValidationIssue(location="discovery.sources.web.queries[0]", message="x")]
+
+    assert tools._phase_from_issues(pointer) == "contacts"
+    assert tools._phase_from_issues(dotted) == "scoring"
+    assert tools._phase_from_issues(indexed) == "discovery"
+
+
+def test_phase_is_none_when_no_issue_belongs_to_a_section():
+    """A missing `vertical` is top-level and genuinely belongs to no section.
+    Guessing one would point the operator at the wrong place — worse than the
+    honest absence."""
+    from app.skill_builder.validator import ValidationIssue
+
+    assert tools._phase_from_issues(
+        [ValidationIssue(location="vertical", message="missing")]
+    ) is None

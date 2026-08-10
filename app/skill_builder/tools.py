@@ -49,6 +49,7 @@ from app.skill_builder import (
     validator,
 )
 from app.skill_builder.protocol.agui import AGUIEmitter, InterruptReason
+from app.skill_builder.state import PHASES
 from app.skill_builder.validator import ValidationIssue
 
 logger = logging.getLogger(__name__)
@@ -145,6 +146,27 @@ def _format_issues(issues: list[ValidationIssue]) -> str:
     return "\n".join(f"  - {i.location}: {i.message}" for i in issues)
 
 
+def _phase_from_issues(issues: list[ValidationIssue]) -> str | None:
+    """The authoring section an issue points at, or None if it names none.
+
+    Locations arrive in two spellings and both must work: the schema validator
+    emits JSON-pointer-ish (`/discovery/sources/web`) while the R12 and
+    placeholder lints emit dotted paths (`discovery.sources.web.queries[0]`).
+    Handling only one would silently return None for half the issues — the
+    no-phase interrupt this exists to fix.
+
+    Returns the FIRST issue that names a phase rather than trying to summarise
+    several: the operator repairs one section at a time, and a wrong single
+    phase is worse than the honest None we fall back to (a top-level issue like
+    a missing `vertical` genuinely belongs to no section).
+    """
+    for issue in issues:
+        head = issue.location.lstrip("/").split(".")[0].split("/")[0].split("[")[0]
+        if head in PHASES:
+            return head
+    return None
+
+
 def _finalize_only_issues(draft_config: dict[str, Any]) -> list[ValidationIssue]:
     """Checks that apply to finalizing, but not to a test run.
 
@@ -215,7 +237,22 @@ def _emit_or_block(
     issues += _arg_issues(tool, args)
     if issues:
         emitter.message(f"{blocked_intro}\n{_format_issues(issues)}")
-        emitter.interrupt(InterruptReason.AWAITING_PHASE_ACCEPTANCE)
+        # Name the section to repair. This used to interrupt with no `phase` at
+        # all, which reads as "something is wrong, somewhere" — and in the
+        # all-accepted state it is a dead end: frontend's `canFinalize` requires
+        # `testSatisfied`, which is exactly what a blocked test run leaves false,
+        # so the operator gets an interrupt naming nothing and no enabled
+        # affordance (#27 turn 10).
+        #
+        # The REASON stays `awaiting_phase_acceptance` deliberately. Contract #5
+        # closed that vocabulary on our word, so inventing a "repair_needed"
+        # value would put a string on the wire no consumer can render while
+        # every gate still looked green. `phase` is optional by contract, so
+        # populating it is strictly additive.
+        emitter.interrupt(
+            InterruptReason.AWAITING_PHASE_ACCEPTANCE,
+            phase=_phase_from_issues(issues),
+        )
         return ToolCallOutcome(requested=False, issues=issues)
     tool_call_id = emitter.tool_call(tool.value, args)
     return ToolCallOutcome(requested=True, tool_call_id=tool_call_id)

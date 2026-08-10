@@ -311,3 +311,22 @@ def test_prompt_forbids_inferring_acceptance_from_operator_text():
 
     assert "ACCEPTANCE IS NOT A MESSAGE" in AGENT_IDENTITY
     assert "never as text" in AGENT_IDENTITY
+
+
+def test_identity_states_that_narrating_an_edit_does_not_perform_it():
+    """#27 turn 10: the model wrote a correct diagnosis of the inline
+    `{context_ref:…}` defect, said it had fixed it, and then chose
+    `request_test_run` — so nothing was written and the operator read a repair
+    that never happened. No error on either side.
+
+    A turn carries ONE action, and nothing told the model that. Pinned here
+    because it lives in the CACHED prefix (`AGENT_IDENTITY`) rather than a new
+    layer, which would have moved the `split(stable_layers=5)` boundary.
+    """
+    from app.skill_builder.prompt import AGENT_IDENTITY
+
+    assert "exactly ONE action" in AGENT_IDENTITY
+    assert "describing an edit does not perform it" in AGENT_IDENTITY
+    # The actionable half: say what to do INSTEAD, not just what goes wrong.
+    assert "propose_section" in AGENT_IDENTITY
+    assert "NEXT turn" in AGENT_IDENTITY
