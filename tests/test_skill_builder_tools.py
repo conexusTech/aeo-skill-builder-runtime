@@ -248,3 +248,47 @@ def test_inline_context_ref_blocks_the_tool_gate():
     surfaced = em.wire_events()[1]["delta"]
     assert "inline context reference" in surfaced
     assert "discovery.sources.web.queries[0]" in surfaced, "must locate the offender"
+
+
+def test_finalize_is_blocked_without_a_vertical():
+    """A skill finalized with `vertical: null` is invisible to R13 forever, so
+    every later session builds another one and nothing ever fails (#27 §3).
+
+    Deliberately STRICTER than the ratified schema, which declares `vertical`
+    but leaves it out of root `required` — so this asserts a policy we chose,
+    not one the contract imposes.
+    """
+    config = _complete_config()
+    config.pop("vertical", None)
+
+    em = AGUIEmitter()
+    outcome = tools.request_finalize(em, config, slug="prospect-scanner")
+
+    assert outcome.requested is False
+    assert EventType.TOOL_CALL_START not in _types(em)
+    surfaced = em.wire_events()[1]["delta"]
+    assert "library-first catalog check" in surfaced
+
+
+def test_a_test_run_is_NOT_blocked_without_a_vertical():
+    """A test run is a rehearsal — it writes no skills row and does not compete
+    in the catalog, so the vertical costs nothing there. Gating it too would
+    stall a legitimate rehearsal for a problem that only bites at finalize."""
+    config = _complete_config()
+    config.pop("vertical", None)
+
+    em = AGUIEmitter()
+    outcome = tools.request_test_run(em, config, notes="smoke")
+
+    assert outcome.requested is True
+    assert EventType.TOOL_CALL_START in _types(em)
+
+
+def test_finalize_passes_with_a_vertical():
+    """Guards the guard: if finalize were blocked for some OTHER reason, the
+    test above would pass while proving nothing about the vertical check."""
+    em = AGUIEmitter()
+    outcome = tools.request_finalize(
+        em, _complete_config(), slug="auto-parts-prospect-scanner"
+    )
+    assert outcome.requested is True

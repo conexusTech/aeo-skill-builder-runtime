@@ -139,10 +139,28 @@ def _kickoff(
     # No match → build new (PRD §7.1). Seed a schema-valid skeleton and emit it
     # as the first proposal (first proposal → STATE_SNAPSHOT, delta base is
     # ambiguous — PRD §4).
+    # When the org's runtime context carries no `industry`, the catalog match
+    # could not run at all — `catalog.match` returns [] for a null vertical. The
+    # old opener reported "I didn't find an existing skill for this vertical"
+    # regardless, which reads as a completed search that came back empty. It is
+    # the sentence that makes the problem self-perpetuating: the vertical then
+    # finalizes as null, R13 can never match the skill, and the next session
+    # says the same thing and builds another one (#27 §3).
+    if ctx.vertical:
+        match_clause = (
+            "I didn't find an existing skill for this vertical and lead type, "
+            "so we'll build a new one"
+        )
+    else:
+        match_clause = (
+            "I don't have an industry on file for this customer, so I couldn't "
+            "check whether a skill already exists — tell me the vertical (for "
+            "example 'HVAC' or 'auto parts') and I'll check before we build "
+            "anything new"
+        )
     emitter.message(
         f"You're building a prospect-scanning skill for {facts['customer']} "
-        f"(lead type: {facts['lead_type']}; ICP: {facts['icp']}). I didn't find an "
-        "existing skill for this vertical and lead type, so we'll build a new one "
+        f"(lead type: {facts['lead_type']}; ICP: {facts['icp']}). {match_clause} "
         "— working through geography, discovery, validation, contacts, and "
         "scoring one section at a time. Confirm the customer is correct and I'll begin."
     )
@@ -261,6 +279,43 @@ def _phase_task(state: BuilderState, phase: str | None) -> str:
     return f"Propose the '{phase}' section."
 
 
+def _apply_vertical(
+    emitter: AGUIEmitter, state: BuilderState, decision: ModelDecision
+) -> None:
+    """Record a vertical the model obtained from the operator, and re-derive the slug.
+
+    Applies on ANY action rather than a dedicated one: the vertical normally
+    arrives on an `await_human` turn (the model asked, the operator answered),
+    but it could equally ride along with the first `propose_section`. Gating it
+    on one action would silently drop the answer on the other.
+
+    Only fills a genuine gap — never overwrites a vertical that came from the
+    org's runtime context, which is the authoritative source. And the slug is
+    re-derived here because `build_slug` runs at kickoff, when the vertical was
+    still unknown, so it had already degenerated to the bare
+    `prospect-scanner` (#27 §3).
+    """
+    supplied = (decision.vertical or "").strip()
+    if not supplied:
+        return
+    existing = state.draft_config.get("vertical")
+    if isinstance(existing, str) and existing.strip():
+        return
+
+    patch = [{"op": "add", "path": "/vertical", "value": supplied}]
+    slug = draft.build_slug(supplied)
+    if state.draft_config.get("slug") != slug:
+        patch.append(
+            {
+                "op": "replace" if "slug" in state.draft_config else "add",
+                "path": "/slug",
+                "value": slug,
+            }
+        )
+    state.draft_config = draft.apply(state.draft_config, patch)
+    emitter.state_delta(patch)
+
+
 def _apply_decision(
     emitter: AGUIEmitter,
     state: BuilderState,
@@ -270,6 +325,8 @@ def _apply_decision(
 ) -> None:
     """Turn a ModelDecision into protocol events (PRD §7.2). All validation and
     emission live here; the model only decides."""
+    _apply_vertical(emitter, state, decision)
+
     if decision.action == "propose_section":
         phase = decision.phase or open_phase or ""
         section = decision.section or {}

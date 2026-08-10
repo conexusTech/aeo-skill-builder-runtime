@@ -145,6 +145,45 @@ def _format_issues(issues: list[ValidationIssue]) -> str:
     return "\n".join(f"  - {i.location}: {i.message}" for i in issues)
 
 
+def _finalize_only_issues(draft_config: dict[str, Any]) -> list[ValidationIssue]:
+    """Checks that apply to finalizing, but not to a test run.
+
+    A test run is a rehearsal — it neither writes a `skills` row nor competes in
+    the R13 catalog, so a missing `vertical` costs nothing there. Finalize does
+    both, and that is where it becomes permanent.
+
+    ⚠️ **This is deliberately STRICTER than the ratified schema**, which declares
+    `vertical` but leaves it out of the root `required` (root required is
+    `version` + `run_parameters`). So the gateway's own finalize gate would
+    accept what this refuses, and that asymmetry is intentional rather than an
+    oversight:
+
+    a skill finalized with `vertical: null` is invisible to R13 forever. The
+    kickoff correctly reports "I didn't find an existing skill", so the next
+    session for the same vertical builds another unmatchable one, and the
+    library-first premise quietly stops holding — with nothing failing. An
+    extra question to the operator is a very cheap alternative.
+
+    Raised with the gateway so `vertical` can join root `required`; if it does,
+    this check becomes redundant rather than wrong, and `validate_config` will
+    cover it.
+    """
+    vertical = draft_config.get("vertical")
+    if isinstance(vertical, str) and vertical.strip():
+        return []
+    return [
+        ValidationIssue(
+            location="vertical",
+            message=(
+                "is missing, so this skill could never be matched by the "
+                "library-first catalog check (R13 dimension 1 of 3) and every "
+                "future session would build another one. Ask the operator what "
+                "vertical this customer is in, then set it."
+            ),
+        )
+    ]
+
+
 def _emit_or_block(
     emitter: AGUIEmitter,
     tool: ToolName,
@@ -171,6 +210,8 @@ def _emit_or_block(
     # that disagrees with the one gating finalize. We still gain the earlier
     # catch, because this gate precedes their gate.
     issues += authoring_placeholders.lint_authoring_placeholders(draft_config)
+    if tool is ToolName.REQUEST_FINALIZE:
+        issues += _finalize_only_issues(draft_config)
     issues += _arg_issues(tool, args)
     if issues:
         emitter.message(f"{blocked_intro}\n{_format_issues(issues)}")

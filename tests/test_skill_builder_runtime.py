@@ -522,3 +522,70 @@ def test_message_ids_do_not_repeat_across_turns():
     assert not set(first) & set(second), (
         f"messageIds collided across turns: {sorted(set(first) & set(second))}"
     )
+
+
+# --- vertical: the org context had none, so nothing could supply one --------
+
+
+def _kickoff_text(res):
+    return "".join(
+        e.get("delta", "") for e in res.emitter.wire_events()
+        if e["type"] == "TEXT_MESSAGE_CONTENT"
+    )
+
+
+def test_kickoff_asks_for_the_vertical_when_context_has_none():
+    """#27 §3: the org's `industry` was null, so `vertical` finalized as null
+    and R13 could never match the skill — and the opener still claimed it had
+    looked, which is what made it self-perpetuating."""
+    res = handle_turn(_kickoff_payload(organization_name="ACME"))
+    text = _kickoff_text(res)
+
+    assert "couldn't check whether a skill already exists" in text
+    assert "tell me the vertical" in text
+    assert "I didn't find an existing skill" not in text, (
+        "must not claim a search it could not run"
+    )
+
+
+def test_kickoff_still_reports_a_real_miss_when_the_vertical_is_known():
+    """The honest-miss wording must survive — with a vertical, the catalog
+    check really did run and really did come back empty."""
+    res = handle_turn(_kickoff_payload(organization_name="ACME", vertical="HVAC"))
+    text = _kickoff_text(res)
+
+    assert "I didn't find an existing skill" in text
+    assert "tell me the vertical" not in text
+
+
+def test_a_supplied_vertical_is_recorded_and_re_derives_the_slug():
+    """The slug is built at kickoff, when the vertical was still unknown, so it
+    had already degenerated to the bare `prospect-scanner`."""
+    model = FakeChatModel(ModelDecision(
+        action="await_human", message="Thanks — noted.", vertical="auto parts",
+    ))
+    res = handle_turn(_continuation({}), model=model)
+
+    cfg = res.emitter  # state lives on the turn's state; assert via the delta
+    deltas = [e for e in cfg.wire_events() if e["type"] == "STATE_DELTA"]
+    ops = [op for d in deltas for op in d["delta"]]
+    paths = {op["path"]: op["value"] for op in ops}
+
+    assert paths.get("/draftConfig/vertical") == "auto parts"
+    assert paths.get("/draftConfig/slug") == "auto-parts-prospect-scanner"
+
+
+def test_a_context_supplied_vertical_is_never_overwritten():
+    """The org's runtime context is authoritative; the ask exists only to fill
+    a genuine gap."""
+    model = FakeChatModel(ModelDecision(
+        action="await_human", message="ok", vertical="something else",
+    ))
+    res = handle_turn(
+        _continuation({}, draft_config={"vertical": "HVAC"}), model=model
+    )
+    ops = [
+        op for e in res.emitter.wire_events() if e["type"] == "STATE_DELTA"
+        for op in e["delta"]
+    ]
+    assert not any(op["path"] == "/draftConfig/vertical" for op in ops)

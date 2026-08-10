@@ -59,6 +59,14 @@ class ModelDecision(BaseModel):
     phase: str | None = None
     section: dict[str, Any] | None = None
     slug: str | None = None
+    #: The customer's vertical, when the model had to ASK for it.
+    #:
+    #: Normally this comes from the org's runtime context (`industry`). When
+    #: that column is null there was previously no way for the value to enter
+    #: the draft at all — no slot here, so no amount of prompting could supply
+    #: one — and the session silently produced `vertical: null` plus the
+    #: degenerate slug `prospect-scanner`, which R13 can never match (#27 §3).
+    vertical: str | None = None
     notes: str | None = None
     interrupt_reason: str | None = None
     #: Usage for the call that produced THIS decision. The runtime accumulates it
@@ -123,6 +131,14 @@ _DECISION_WIRE_SCHEMA: dict[str, Any] = {
             "description": "JSON-encoded config section object (for propose_section).",
         },
         "slug": {"type": "string"},
+        "vertical": {
+            "type": "string",
+            "description": (
+                "The customer's vertical/industry, ONLY when you had to ask the "
+                "operator for it because it was missing from the customer "
+                "context. Short and canonical, e.g. 'auto parts', 'HVAC'."
+            ),
+        },
         "notes": {"type": "string"},
         # Enum-constrained, not a bare string: the emitter coerces an unknown
         # value anyway, but a model that never proposes one avoids the coercion
@@ -370,6 +386,7 @@ def _decision_from_mapping(data: dict[str, Any]) -> ModelDecision:
         phase=data.get("phase"),
         section=section,
         slug=data.get("slug"),
+        vertical=data.get("vertical"),
         notes=data.get("notes"),
         interrupt_reason=data.get("interrupt_reason"),
     )
