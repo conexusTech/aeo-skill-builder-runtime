@@ -218,9 +218,22 @@ def ensure_runtime(container_uri: str, role_arn: str, check: bool) -> str | None
     #: variables the create set — and the failure is invisible while the values happen
     #: to match the defaults baked into config.py. It surfaces the first time a
     #: non-default matters, several redeploys after the one that broke it.
+    #: Emitted on RUN_STARTED as `runtimeVersion`, so a consumer can tell which
+    #: build actually served a turn. A session pins to a warm container and keeps
+    #: running the image it started on across deploys, and `get-agent-runtime`
+    #: reports the CONFIGURED version rather than the serving one — that gap cost
+    #: three false "reproductions" of an already-fixed defect on 2026-08-10.
+    #:
+    #: Both halves earn their place: the git tag says WHICH SOURCE, the digest
+    #: prefix says which artifact, and they can disagree (a `-dirty` tag, or a
+    #: rebuild of the same commit). Resolved HERE rather than at module scope so
+    #: `--check` still touches neither git nor the working tree.
+    build_version = f"{image_tag()}@{container_uri.rsplit(':', 1)[-1][:12]}"
+
     environment = {
         "SKILL_BUILDER_MODEL_ID": "anthropic.claude-sonnet-5",
         "SKILL_BUILDER_AWS_REGION": REGION,
+        "SKILL_BUILDER_BUILD_VERSION": build_version,
     }
 
     if existing:

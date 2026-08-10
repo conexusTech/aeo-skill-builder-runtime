@@ -34,6 +34,19 @@ class Settings(BaseSettings):
     SKILL_BUILDER_MODEL_ID: str = "anthropic.claude-sonnet-5"
     SKILL_BUILDER_AWS_REGION: str = "us-east-1"
 
+    #: The build serving a turn, emitted on RUN_STARTED as `runtimeVersion`.
+    #:
+    #: Set by `scripts/provision.py` at deploy time from the image tag (the git
+    #: SHA), so it identifies code rather than an AgentCore version number. It
+    #: exists because a builder session pins to a warm container and keeps
+    #: running the image it started on across deploys, with no signal anywhere —
+    #: `get-agent-runtime` reports the CONFIGURED version, not the one serving a
+    #: live session, which cost three false "reproductions" of a fixed defect.
+    #:
+    #: Empty means unstamped and the field is omitted from the wire, which is
+    #: deliberately distinguishable from a stamp reading "unknown".
+    SKILL_BUILDER_BUILD_VERSION: str = ""
+
     # --- Gateway-owned contracts (PRD §14) ---------------------------------
     # All FIVE are ratified v1, and the files bundled in app/skill_builder/stubs
     # are pinned verbatim copies — so empty here means "use the pinned copy", not

@@ -172,3 +172,43 @@ def test_last_user_text_returns_operator_text_on_the_kickoff_turn():
 
     # The genuinely-empty kickoff is the only case that yields None.
     assert RunAgentInput.model_validate({"messages": []}).last_user_text() is None
+
+
+def test_run_started_carries_the_build_version(monkeypatch):
+    """A consumer cannot otherwise know which build served a turn.
+
+    A session pins to a warm container and keeps running the image it started
+    on across deploys, and `get-agent-runtime` reports the CONFIGURED version,
+    not the serving one — three false "reproductions" of a fixed defect came
+    from that gap (#27).
+    """
+    from app.skill_builder.protocol import agui
+
+    monkeypatch.setattr(agui, "_build_version", lambda: "1c6bb52@6fd25c48df95")
+    em = AGUIEmitter(thread_id="t", run_id="r")
+    em.run_started()
+
+    assert em.wire_events()[0]["runtimeVersion"] == "1c6bb52@6fd25c48df95"
+
+
+def test_run_started_omits_the_version_when_unstamped(monkeypatch):
+    """Omitted, not "unknown": "this build does not stamp itself" and "the stamp
+    says unknown" are different facts, and backend persists the first turn's
+    value — so it must be able to tell them apart. Also keeps a local run
+    without the env var emitting a valid stream."""
+    from app.skill_builder.protocol import agui
+
+    monkeypatch.setattr(agui, "_build_version", lambda: None)
+    em = AGUIEmitter(thread_id="t")
+    em.run_started()
+
+    assert "runtimeVersion" not in em.wire_events()[0]
+
+
+def test_build_version_is_absent_rather_than_blank_by_default():
+    """The settings default is empty, and empty must resolve to None so the
+    field is dropped — not emitted as an empty string, which would read as a
+    stamped build whose identity is blank."""
+    from app.skill_builder.protocol.agui import _build_version
+
+    assert _build_version() is None

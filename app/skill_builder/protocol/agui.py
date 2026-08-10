@@ -259,9 +259,31 @@ class StateSnapshotEvent(_Event):
 
 
 class RunStartedEvent(_Event):
+    """Start of a turn.
+
+    `runtimeVersion` identifies the build that ACTUALLY served this turn, which
+    no consumer could otherwise know. A builder session pins to a warm container
+    (R2 maps `threadId` ⇄ `runtimeSessionId` one-to-one), so a session open
+    across a deploy keeps executing the image it started on — with no signal
+    anywhere. On 2026-08-10 that produced three "reproductions" of an
+    already-fixed defect, and `get-agent-runtime` could not have revealed it: it
+    reports the runtime's CONFIGURED version, not the one serving a live session.
+
+    Carried on RUN_STARTED and deliberately NOT on `RUN_FINISHED.result`, which
+    backend also offered. That result root is the one CLOSED contract (#5),
+    closed on our word — adding a field there is precisely the drift our own
+    conformance suite exists to catch. RUN_STARTED is pinned by no contract, so
+    this needs no coordinated bump from anyone.
+
+    Optional, and omitted from the wire when unset (`exclude_none`), so a
+    consumer that never reads it is unaffected and a local run without the env
+    var still emits a valid stream.
+    """
+
     type: EventType = EventType.RUN_STARTED
     thread_id: str | None = Field(default=None, alias="threadId")
     run_id: str | None = Field(default=None, alias="runId")
+    runtime_version: str | None = Field(default=None, alias="runtimeVersion")
 
 
 class RunFinishedEvent(_Event):
@@ -412,6 +434,25 @@ class TokenUsage(BaseModel):
         )
 
 
+def _build_version() -> str | None:
+    """The build serving this turn, or None when unstamped.
+
+    Imported lazily rather than at module scope to keep this file — the one
+    owned protocol module — free of a config dependency at import time, and
+    because `get_settings()` is `@lru_cache`d, so the value is resolved once per
+    process and an env change needs a NEW runtime version rather than a restart
+    (which is exactly the property being reported here).
+
+    Returns None rather than a placeholder when unset, so the field is omitted
+    from the wire entirely: "this build does not stamp itself" and "the stamp
+    says unknown" are different facts, and a consumer persisting the first turn's
+    value should be able to tell them apart.
+    """
+    from app.config import get_settings
+
+    return get_settings().SKILL_BUILDER_BUILD_VERSION.strip() or None
+
+
 # --- Emitter ---------------------------------------------------------------
 
 
@@ -477,7 +518,13 @@ class AGUIEmitter:
     # call sites type-checkable without the pydantic mypy plugin; the Python
     # attribute names stay snake_case per repo style.
     def run_started(self) -> None:
-        self._append(RunStartedEvent(threadId=self.thread_id, runId=self.run_id))
+        self._append(
+            RunStartedEvent(
+                threadId=self.thread_id,
+                runId=self.run_id,
+                runtimeVersion=_build_version(),
+            )
+        )
 
     def record_usage(self, usage: TokenUsage) -> None:
         """Add one model call's usage to this turn's total (thread #14)."""
