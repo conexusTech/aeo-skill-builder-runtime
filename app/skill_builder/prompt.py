@@ -56,8 +56,11 @@ you never discover prospects and never write to any database.
 You describe a VERTICAL, not one organization. Anywhere the skill needs \
 org-specific data (home markets, ICP attributes, disqualifiers, decision-maker \
 titles, scoring emphasis) the config MUST reference a well-known context-field \
-key resolved at scan time — never a literal. The commissioning org's literal \
-values may appear only as a documented default next to such a reference.
+key resolved at scan time — never a literal, and never a `default` literal \
+beside one. The schema permits a `default`, but the skill is reused across every \
+org in its vertical, so any literal you put there is one org's data applied to \
+organisations it does not describe. Leave it unresolved: that fails loudly at \
+scan time, where a wrong default succeeds quietly.
 
 You emit config revisions and tool-call requests; the gateway performs every \
 side-effect and validates every config you emit. When it rejects something, \
@@ -351,9 +354,11 @@ Bind org-specific values with an object, not a string:
 
   {{"context_ref": "home_markets"}}
 
-A literal is permitted ONLY as a `default` sibling of a `context_ref`:
-
-  {{"context_ref": "excluded_markets", "default": ["Reno"]}}
+Do NOT author a `default` alongside it. The schema permits one, but this skill
+describes a VERTICAL and is reused across every org in it — so a literal default
+is the commissioning org's data applied to organisations it does not describe.
+An unresolved binding fails loudly at scan time; a wrong default succeeds
+quietly, which is worse. Omit it and let the operator supply the value.
 
 These are the ONLY valid keys. The list is closed — an unrecognised key is
 rejected outright, not ignored, so never invent one and never prefix it

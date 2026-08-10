@@ -86,8 +86,15 @@ def test_bindings_layer_gives_the_syntax_and_the_closed_key_list():
     rendered = _compose().render()
     # Exact binding shape, not just the concept.
     assert '{"context_ref": "home_markets"}' in rendered
-    # A literal is legal only as a `default` sibling.
-    assert '"default"' in rendered
+    # `default` is NAMED so the model knows the shape it must not author — but
+    # only as a prohibition. This assertion used to require a worked EXAMPLE of a
+    # literal default (`{"context_ref": "excluded_markets", "default": ["Reno"]}`),
+    # and #28 is what that cost: on a Nashville org the model reproduced the
+    # shape with Austin values, systematically. The rule and the counter-example
+    # coexisted and the example won, so the example is gone and this now pins the
+    # absence of one (see test_prompt_shows_no_worked_example_of_a_literal_default).
+    assert "`default`" in rendered
+    assert '"default":' not in rendered, "must not demonstrate what it forbids"
     # The closed vocabulary must actually be enumerated.
     for key in contracts.context_field_keys():
         assert key in rendered, f"{key} missing from the prompt"
@@ -330,3 +337,46 @@ def test_identity_states_that_narrating_an_edit_does_not_perform_it():
     # The actionable half: say what to do INSTEAD, not just what goes wrong.
     assert "propose_section" in AGENT_IDENTITY
     assert "NEXT turn" in AGENT_IDENTITY
+
+
+def _rendered():
+    from app.skill_builder import contracts
+    from app.skill_builder.context import CustomerContext
+    from app.skill_builder.prompt import compose
+
+    return compose(
+        customer_context=CustomerContext({"organization_name": "Nashville HVAC"}),
+        task="Propose the geography section.",
+        tools=contracts.tool_schemas(),
+        context_field_keys=contracts.context_field_keys(),
+        config_positions=contracts.config_positions(),
+        runtime_populated=contracts.runtime_populated_positions(),
+        config_schema=contracts.config_schema(),
+    ).render()
+
+
+def test_prompt_shows_no_worked_example_of_a_literal_default():
+    """#28: on a NASHVILLE org the model bound geography with AUSTIN defaults,
+    systematically, on fresh sessions.
+
+    It was not inventing the shape — we taught it. The prompt rendered
+    `{"context_ref": "excluded_markets", "default": ["Reno"]}` as a worked
+    example, and a concrete example is the strongest signal in a prompt: the
+    model matched the structure and filled the city from the only other literal
+    in scope. Asserting the EXAMPLE is absent, not merely that a rule exists —
+    the rule and the counter-example coexisted before, and the example won.
+    """
+    p = _rendered()
+    assert "Reno" not in p
+    assert '"default":' not in p, "no worked example may demonstrate a literal default"
+
+
+def test_prompt_tells_the_model_to_omit_default_and_says_why():
+    """A bare prohibition gets weighed against the schema, which permits
+    `default`. The reason is what makes it hold: the skill is reused across a
+    vertical, so a literal default is one org's data applied to others."""
+    p = _rendered()
+    assert "Do NOT author a `default`" in p
+    assert "VERTICAL" in p
+    # The asymmetry is the actual argument — loud failure beats quiet wrongness.
+    assert "fails loudly" in p
