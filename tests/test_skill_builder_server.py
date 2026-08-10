@@ -145,3 +145,23 @@ def test_continuation_with_model_streams_state_delta(client_with_model):
     )
     assert resp.status_code == 200
     assert "STATE_DELTA" in resp.text
+
+
+def test_importing_the_server_enables_our_INFO_logging():
+    """Our `logger.info` calls reached CloudWatch ZERO times before this.
+
+    uvicorn configures its own loggers, so its INFO lines appeared and the log
+    looked healthy while our root logger sat at the default WARNING. Tracebacks
+    still arrived, which is exactly why nobody noticed — and it silently voided
+    the diagnostic line added for #27, after I had told backend it was in place.
+
+    Asserted on the ROOT logger because that is what gates a module-level
+    `getLogger(__name__).info` — checking our own logger's level would pass
+    while production stayed silent.
+    """
+    import logging
+
+    import app.skill_builder.server  # noqa: F401  (import IS the behaviour)
+
+    assert logging.getLogger().level <= logging.INFO
+    assert logging.getLogger("app.skill_builder.model").isEnabledFor(logging.INFO)

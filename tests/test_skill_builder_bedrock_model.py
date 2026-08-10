@@ -143,3 +143,92 @@ def test_handle_turn_survives_an_empty_model_response():
     types = [e.type for e in res.emitter.events]
     assert EventType.RUN_ERROR in types, "must surface in-stream, not crash the invocation"
     assert types[0] == EventType.RUN_STARTED, "stream must still open cleanly"
+
+
+def test_prose_answer_retries_once_with_the_tool_forced():
+    """Frontend's first E2E died here (2026-08-10).
+
+    The model answered in prose with no tool call. The old guard only caught
+    EMPTY text, and `json.loads("Some prose")` raises the same
+    JSONDecodeError at char 0 as `json.loads("")` — identical in a stack
+    trace, different cause. Now: retry once with the tool forced, because the
+    unforced call already failed and a worse answer beats no answer.
+    """
+    calls = []
+
+    class _TwoShot(_Client):
+        def create(self, **kw):
+            calls.append(kw)
+            if len(calls) == 1:
+                return _Response([_Block("text", text="Sure, running that now!")])
+            return _Response([
+                _Block("tool_use", name="emit_decision",
+                       input={"action": "await_human", "message": "ok"}),
+            ])
+
+    m = BedrockChatModel(model_id="anthropic.claude-sonnet-5", aws_region="us-east-1")
+    m._client = _TwoShot(None)
+
+    d = _decide(m)
+
+    assert d.action == "await_human", "the retry's decision must be used"
+    assert len(calls) == 2, "exactly one retry — never a loop"
+    assert "tool_choice" not in calls[0], "first call stays unforced"
+    assert calls[1]["tool_choice"] == {"type": "tool", "name": "emit_decision"}
+
+
+def test_the_retry_sums_usage_instead_of_dropping_the_first_call():
+    """Two model calls really were paid for. Reporting only the retry
+    under-bills every repaired turn, and it would look correct doing it (#14)."""
+    class _TwoShot(_Client):
+        def create(self, **kw):
+            if not hasattr(self, "_n"):
+                self._n = 0
+            self._n += 1
+            if self._n == 1:
+                return _Response([_Block("text", text="prose")])
+            return _Response([
+                _Block("tool_use", name="emit_decision",
+                       input={"action": "await_human", "message": "ok"}),
+            ])
+
+    m = BedrockChatModel(model_id="anthropic.claude-sonnet-5", aws_region="us-east-1")
+    m._client = _TwoShot(None)
+
+    d = _decide(m)
+    # _Usage reports 16000 output per call; both calls must be counted.
+    assert d.usage.output_tokens == 32000, "first call's tokens were dropped"
+
+
+def test_a_thinking_only_response_does_NOT_retry():
+    """No text means the model produced nothing — usually max_tokens eaten by
+    thinking. A retry would burn the budget again and fail identically, so it
+    must fail fast with the descriptive error instead."""
+    calls = []
+
+    class _Once(_Client):
+        def create(self, **kw):
+            calls.append(kw)
+            return _Response([_Block("thinking", thinking="...")],
+                             stop_reason="max_tokens")
+
+    m = BedrockChatModel(model_id="anthropic.claude-sonnet-5", aws_region="us-east-1")
+    m._client = _Once(None)
+
+    with pytest.raises(RuntimeError, match="no decision"):
+        _decide(m)
+    assert len(calls) == 1, "must not retry when there was no text to begin with"
+
+
+def test_prose_surviving_the_forced_retry_names_the_cause():
+    """If even the forced retry answers in prose, the error must say so rather
+    than pointing at json.loads — that opacity cost a cross-repo dig."""
+    class _AlwaysProse(_Client):
+        def create(self, **kw):
+            return _Response([_Block("text", text="I'd rather just explain it.")])
+
+    m = BedrockChatModel(model_id="anthropic.claude-sonnet-5", aws_region="us-east-1")
+    m._client = _AlwaysProse(None)
+
+    with pytest.raises(RuntimeError, match="answered in prose"):
+        _decide(m)

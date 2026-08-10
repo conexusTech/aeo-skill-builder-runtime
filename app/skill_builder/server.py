@@ -21,6 +21,7 @@ not required to import this module or run the tests).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 
 from fastapi import Depends, FastAPI, Header, Request
@@ -53,6 +54,29 @@ def get_chat_model() -> ChatModel:
         )
     return _model_singleton
 
+
+#: 🔴 Without this, NONE of our `logger.info` calls reach CloudWatch.
+#:
+#: uvicorn configures its own loggers, so its INFO lines appear and the log looks
+#: healthy — 1834 of them in one hour on 2026-08-10 — while our root logger sat at
+#: the default WARNING and dropped every `logger.info` we emit. `logger.exception`
+#: and `logger.warning` were unaffected, which is exactly why it went unnoticed:
+#: tracebacks arrived, so the logging "obviously worked".
+#:
+#: That silently voided the diagnostic line added for #27 — I told backend
+#: stop_reason and block types were "logged on every call" and not one had ever
+#: been written. A stated precaution that is never applied reads exactly like an
+#: applied one; this is the third instance on this feature.
+#:
+#: `force=True` because uvicorn may have already installed handlers on the root
+#: logger by import time, and `basicConfig` is a no-op when handlers exist —
+#: without it this fix would itself be a no-op some of the time, depending on
+#: import order, which is the worst of both outcomes.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s %(name)s: %(message)s",
+    force=True,
+)
 
 app = FastAPI(
     title="Skill Builder Agent",

@@ -272,18 +272,67 @@ class BedrockChatModel(ChatModel):
                 self._max_tokens,
             )
 
+        usage = _usage_from_response(response)
         tool_use = next((b for b in response.content if b.type == "tool_use"), None)
+
+        if tool_use is None and _has_text(response):
+            # The model answered in PROSE instead of calling the tool. Reachable
+            # by design — `tool_choice` is unforced because forcing it suppresses
+            # thinking and measurably degrades the answer — and it happened on
+            # frontend's first E2E, killing the turn.
+            #
+            # Retry ONCE with the tool forced. This is the right place to accept
+            # the forced-mode penalty: the unforced call already failed, so the
+            # choice is a worse answer versus no answer at all. Bounded to one
+            # extra call so a stubborn model cannot loop.
+            #
+            # The previous guard only caught EMPTY text, which is why this fell
+            # through: `json.loads("Some prose")` fails at char 0 with the exact
+            # same JSONDecodeError as `json.loads("")`, so the two look identical
+            # in a stack trace while having different causes.
+            logger.warning(
+                "no tool call (stop_reason=%s, blocks=%s) — retrying once with "
+                "tool_choice forced",
+                response.stop_reason,
+                [b.type for b in response.content],
+            )
+            response = self._client.messages.create(
+                model=self._model_id,
+                max_tokens=self._max_tokens,
+                thinking={"type": "adaptive"},
+                system=system,
+                messages=wire_messages,
+                tools=[_DECISION_TOOL],
+                tool_choice={"type": "tool", "name": _DECISION_TOOL["name"]},
+            )
+            # Summed, not replaced: the first call's tokens were really spent, and
+            # billing that reads only the retry under-reports every repaired turn
+            # (#14 — TokenUsage supports `+` for exactly this).
+            usage = usage + _usage_from_response(response)
+            logger.info(
+                "decide retry: stop_reason=%s blocks=%s",
+                response.stop_reason,
+                [b.type for b in response.content],
+            )
+            tool_use = next(
+                (b for b in response.content if b.type == "tool_use"), None
+            )
+
         if tool_use is not None:
             decision = _decision_from_mapping(dict(tool_use.input))
         else:
-            # The model answered in prose instead of calling the tool. Rare,
-            # but `tool_choice` is unforced by design (see above), so it is
-            # reachable. The text is only parseable if it happens to be the
-            # JSON envelope; when it is not, json.loads raises and the turn
-            # becomes an in-stream RUN_ERROR, which is the honest outcome —
-            # inventing a decision here would put words in the operator's
-            # conversation that the model never chose.
+            # Last resort. Text is only parseable if it happens to BE the JSON
+            # envelope; otherwise raise something that names the cause rather
+            # than pointing at json.loads.
             text = next((b.text for b in response.content if b.type == "text"), "")
+            if text.strip() and not text.lstrip().startswith(("{", "[")):
+                raise RuntimeError(
+                    "model answered in prose and did not call the decision tool, "
+                    "even with tool_choice forced: stop_reason="
+                    f"{response.stop_reason!r}, blocks="
+                    f"{[b.type for b in response.content]}, "
+                    f"text_starts={text.lstrip()[:80]!r}"
+                )
             if not text.strip():
                 # Neither a tool call nor any text. The usual cause is
                 # `stop_reason == "max_tokens"` with adaptive thinking eating
@@ -306,8 +355,21 @@ class BedrockChatModel(ChatModel):
                     )
                 )
             decision = _parse_wire_decision(text)
-        decision.usage = _usage_from_response(response)
+        decision.usage = usage
         return decision
+
+
+def _has_text(response: Any) -> bool:
+    """True when the response carries any non-blank text block.
+
+    Distinguishes "answered in prose" (retry with the tool forced — the model
+    had something to say and chose the wrong channel) from "produced nothing"
+    (a thinking-only reply truncated at max_tokens, where a retry would just
+    burn the budget a second time and fail the same way).
+    """
+    return any(
+        b.type == "text" and b.text.strip() for b in getattr(response, "content", [])
+    )
 
 
 def _usage_from_response(response: Any) -> TokenUsage:
