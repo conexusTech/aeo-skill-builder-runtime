@@ -215,3 +215,36 @@ def test_the_finalize_message_promises_no_status():
     # The facts we do know are still reported.
     assert "connected" in text
     assert "activation" in text
+
+
+def test_inline_context_ref_blocks_the_tool_gate():
+    """Wiring test for the authoring-placeholder lint (#27 §3).
+
+    Asserted through `request_test_run`, NOT by calling the lint directly: the
+    lint's own suite already proves it detects this, and a passing unit test
+    plus an unwired call site is a failure this repo has produced before. If
+    the call in `_emit_or_block` is deleted, this must go red.
+
+    The config is otherwise complete and schema-valid, so nothing BUT the new
+    lint can be what blocks it.
+    """
+    config = _complete_config()
+    config["discovery"] = {
+        "sources": {
+            "web": {
+                "queries": [
+                    "alternatives to {context_ref:competitors} for businesses in {market}"
+                ]
+            }
+        }
+    }
+
+    em = AGUIEmitter()
+    outcome = tools.request_test_run(em, config, notes="smoke")
+
+    assert outcome.requested is False, "a never-resolved ref must not reach a test run"
+    assert EventType.TOOL_CALL_START not in _types(em)
+    # [0] is TEXT_MESSAGE_START; the text rides on the CONTENT event.
+    surfaced = em.wire_events()[1]["delta"]
+    assert "inline context reference" in surfaced
+    assert "discovery.sources.web.queries[0]" in surfaced, "must locate the offender"

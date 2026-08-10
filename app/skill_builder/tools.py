@@ -42,7 +42,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.skill_builder import contracts, org_coupling, validator
+from app.skill_builder import (
+    authoring_placeholders,
+    contracts,
+    org_coupling,
+    validator,
+)
 from app.skill_builder.protocol.agui import AGUIEmitter, InterruptReason
 from app.skill_builder.validator import ValidationIssue
 
@@ -154,6 +159,18 @@ def _emit_or_block(
     # make and is rejected after the tool call, where the repair loop has least
     # to work with.
     issues += org_coupling.lint_org_coupling(draft_config)
+    # Unfilled brackets and inline `{context_ref:…}` — both pass strict schema
+    # AND R12 (they are plain strings, not binding objects), which is how a real
+    # session persisted four of them with every gate clean (#27 §3).
+    #
+    # Placed HERE and deliberately not at the section-proposal gate. Backend
+    # runs the same lint at test-run/finalize only, on the grounds that a
+    # half-written query mid-conversation is a normal intermediate state and
+    # rejecting it would stall the authoring loop. Matching their placement is
+    # the point: a port that fires where theirs does not produces a verdict
+    # that disagrees with the one gating finalize. We still gain the earlier
+    # catch, because this gate precedes their gate.
+    issues += authoring_placeholders.lint_authoring_placeholders(draft_config)
     issues += _arg_issues(tool, args)
     if issues:
         emitter.message(f"{blocked_intro}\n{_format_issues(issues)}")
