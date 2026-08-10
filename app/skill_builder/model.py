@@ -17,6 +17,7 @@ before running the AgentCore runtime.
 from __future__ import annotations
 
 import json
+import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
@@ -33,6 +34,8 @@ if TYPE_CHECKING:
 
 from app.skill_builder.prompt import PromptComposition
 from app.skill_builder.protocol.agui import InterruptReason, Message, TokenUsage
+
+logger = logging.getLogger(__name__)
 
 # Actions the model may choose each turn. Kept as a plain str set (not the
 # InterruptReason enum) — this is the model↔runtime contract, decoupled from the
@@ -180,7 +183,14 @@ class BedrockChatModel(ChatModel):
     """
 
     def __init__(
-        self, *, model_id: str, aws_region: str, max_tokens: int = 8000
+        # 8000 was too small and turn 4 of the first real multi-turn session
+        # died on it (#27): `max_tokens` caps thinking AND the answer together,
+        # so on a long conversation adaptive thinking can consume the whole
+        # budget and the response comes back with a thinking block and nothing
+        # else — no tool_use, no text. Doubled rather than maximised: this call
+        # is non-streaming and sits in a threadpool, and a very large budget
+        # risks an HTTP timeout instead of a truncation.
+        self, *, model_id: str, aws_region: str, max_tokens: int = 16000
     ) -> None:
         # Lazy import so this module imports without the anthropic SDK present.
         from anthropic import AnthropicBedrockMantle
@@ -228,6 +238,24 @@ class BedrockChatModel(ChatModel):
         # type narrowing AND is quietly worse at runtime, since an SDK rename
         # would yield no blocks and surface as a JSON decode error on "" instead
         # of an attribute error naming the real cause.
+        # Logged on EVERY call, not just failures: #27 had to root-cause a
+        # truncation from a stack trace because neither stop_reason nor the
+        # budget appeared anywhere in our logs. One line per turn is cheap
+        # next to a cross-repo investigation.
+        logger.info(
+            "decide: stop_reason=%s blocks=%s output_tokens=%s max_tokens=%s",
+            response.stop_reason,
+            [b.type for b in response.content],
+            getattr(response.usage, "output_tokens", None),
+            self._max_tokens,
+        )
+        if response.stop_reason == "max_tokens":
+            logger.warning(
+                "model hit max_tokens (%s) — thinking and answer share this "
+                "budget, so the decision may be truncated or absent",
+                self._max_tokens,
+            )
+
         tool_use = next((b for b in response.content if b.type == "tool_use"), None)
         if tool_use is not None:
             decision = _decision_from_mapping(dict(tool_use.input))
@@ -240,6 +268,27 @@ class BedrockChatModel(ChatModel):
             # inventing a decision here would put words in the operator's
             # conversation that the model never chose.
             text = next((b.text for b in response.content if b.type == "text"), "")
+            if not text.strip():
+                # Neither a tool call nor any text. The usual cause is
+                # `stop_reason == "max_tokens"` with adaptive thinking eating
+                # the whole budget, leaving a thinking block and nothing else
+                # — which is exactly how #27's turn 4 died. Previously this
+                # fell through to json.loads("") and surfaced as an opaque
+                # JSONDecodeError that named the parser instead of the cause,
+                # and cost the reporting team a CloudWatch dig to root-cause.
+                raise RuntimeError(
+                    "model returned no decision: stop_reason="
+                    f"{response.stop_reason!r}, blocks="
+                    f"{[b.type for b in response.content]}, "
+                    f"max_tokens={self._max_tokens}, "
+                    f"output_tokens={getattr(response.usage, 'output_tokens', None)}"
+                    + (
+                        " — the budget was consumed before an answer was"
+                        " produced; raise max_tokens or lower effort."
+                        if response.stop_reason == "max_tokens"
+                        else ""
+                    )
+                )
             decision = _parse_wire_decision(text)
         decision.usage = _usage_from_response(response)
         return decision
