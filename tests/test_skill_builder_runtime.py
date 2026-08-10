@@ -487,3 +487,38 @@ def test_continue_sends_propose_when_the_section_is_still_empty():
     )
     assert "Propose the 'geography' section." in seen["rendered"]
     assert "REVISE" not in seen["rendered"]
+
+
+def _message_ids(res):
+    """Every messageId the turn put on the wire, in order."""
+    return [e["messageId"] for e in res.emitter.wire_events() if "messageId" in e]
+
+
+def test_message_ids_do_not_repeat_across_turns():
+    """Tracker #25: ids must be unique ACROSS turns, not just within one.
+
+    `handle_turn` builds a fresh emitter per turn, so a per-emitter counter
+    restarts at 1 every turn and turn 2 re-emits turn 1's ids. The frontend
+    keys chat bubbles by `messageId`, so the second turn's text streamed into
+    the first turn's bubble — with no error anywhere.
+
+    Asserted through `handle_turn`, not by constructing an emitter directly:
+    the defect was in how production builds the emitter, so an isolated
+    emitter test would have passed throughout. Reverting `_default_id` to a
+    bare `f"msg-{next(self._counter)}"` must fail this.
+    """
+    first = _message_ids(handle_turn(_kickoff_payload(organization_name="ACME")))
+    second = _message_ids(handle_turn(_kickoff_payload(organization_name="ACME")))
+
+    # Guard the guard: if the turn emitted no ids at all, the disjointness
+    # assertion below would hold vacuously and prove nothing.
+    assert first, "turn emitted no messageIds — the assertion below would be vacuous"
+
+    # NOT asserted: uniqueness *within* a turn. START/CONTENT/END for one
+    # assistant message deliberately share a messageId — that is the AG-UI
+    # contract and `test_text_message_events_serialize_camelcase` pins it. An
+    # earlier draft of this test asserted within-turn uniqueness and failed
+    # against correct code; the bug is repetition ACROSS turns.
+    assert not set(first) & set(second), (
+        f"messageIds collided across turns: {sorted(set(first) & set(second))}"
+    )

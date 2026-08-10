@@ -51,6 +51,7 @@ from collections.abc import Callable
 from enum import StrEnum
 from itertools import count
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -423,10 +424,23 @@ class AGUIEmitter:
     list is asserted directly, which is what makes the runtime testable against
     a mocked stream (PRD §15).
 
-    `id_factory` injects message/tool-call id generation so tests are
-    deterministic; production passes a uuid factory. It defaults to a simple
-    monotonic counter, never `random`/`uuid` implicitly, so a forgotten
-    injection can't make a test flaky.
+    `id_factory` injects message/tool-call id generation so tests can be
+    deterministic. The DEFAULT is uuid-backed and unique per emitter, which is
+    an inversion of what this docstring used to claim.
+
+    It previously said "production passes a uuid factory" and defaulted to a
+    bare `count(1)` so a forgotten injection couldn't make a test flaky. No
+    production call site ever passed one — `handle_turn` builds a fresh emitter
+    per turn, so every turn re-emitted `msg-1`, `msg-2`, … and the frontend
+    keys chat bubbles by `messageId`. Turn 2's text streamed into turn 1's
+    bubble (tracker #25). A docstring describing a precaution nobody applied
+    read exactly like the precaution being in place.
+
+    So the default is now correct rather than convenient, and the failure mode
+    is inverted with it: a test that wants stable ids must inject a factory,
+    and forgetting to shows up as a visibly random id in that test. Loud in a
+    test beats silent in production — the old arrangement was quiet in exactly
+    the place a user could see it.
     """
 
     def __init__(
@@ -440,6 +454,10 @@ class AGUIEmitter:
         self.run_id = run_id
         self.events: list[_Event] = []
         self._counter = count(1)
+        #: Per-emitter, so ids cannot repeat across turns even though the
+        #: counter restarts. The counter is kept for readability of a single
+        #: turn's stream; the uuid segment is what makes it unique.
+        self._id_prefix = uuid4().hex[:12]
         self._id_factory = id_factory or self._default_id
         #: Accumulated across every model call this turn. Held on the emitter, not
         #: threaded through call sites, so a terminal path cannot forget to attach
@@ -447,7 +465,7 @@ class AGUIEmitter:
         self.usage = TokenUsage()
 
     def _default_id(self) -> str:
-        return f"msg-{next(self._counter)}"
+        return f"msg-{self._id_prefix}-{next(self._counter)}"
 
     def _append(self, event: _Event) -> _Event:
         self.events.append(event)
