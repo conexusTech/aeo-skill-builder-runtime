@@ -30,7 +30,6 @@ if TYPE_CHECKING:
     # the alternative, an `ignore_missing_imports` override, silenced genuine
     # errors in exactly the module that uses the SDK most.
     from anthropic.types import MessageParam, TextBlockParam
-    from anthropic.types.output_config_param import OutputConfigParam
 
 from app.skill_builder.prompt import PromptComposition
 from app.skill_builder.protocol.agui import InterruptReason, Message, TokenUsage
@@ -135,6 +134,38 @@ _DECISION_WIRE_SCHEMA: dict[str, Any] = {
 }
 
 
+#: The decision envelope as a TOOL rather than `output_config.format`.
+#:
+#: Structured outputs are documented as available on Bedrock, but the **Mantle**
+#: endpoint rejects them: `output_config.format: Extra inputs are not permitted`
+#: (measured, not inferred — `output_config.effort` is accepted on the same
+#: endpoint, so it is `format` specifically, and `strict: true` on a tool is
+#: rejected too). That left this runtime with no way to get a structured
+#: decision out of the model at all: the prompt never described this envelope,
+#: so the shape rode entirely on the parameter Mantle refuses.
+#:
+#: The description is the whole contract the model gets, which is why it states
+#: WHEN to call rather than only what it does.
+_DECISION_TOOL: dict[str, Any] = {
+    "name": "emit_decision",
+    "description": (
+        "Emit your decision for this turn. Call this exactly once on every "
+        "turn — it is the only way your response reaches the operator. Do not "
+        "reply in prose instead; prose is not delivered. Put what the operator "
+        "should read in `message`, and when you are proposing or revising a "
+        "config section, put that section in `section_json` as a JSON-encoded "
+        "string.\n\n"
+        "`section_json` must be the section's BODY ONLY — do NOT wrap it in "
+        "its own name. For the 'geography' section, send "
+        '{"home_markets": ..., "targeting": ...}, NOT '
+        '{"geography": {"home_markets": ...}}. The name is already carried in '
+        "`phase`; wrapping it nests the section under itself and silently "
+        "corrupts the config."
+    ),
+    "input_schema": _DECISION_WIRE_SCHEMA,
+}
+
+
 class BedrockChatModel(ChatModel):
     """Claude on Amazon Bedrock via the Mantle client (Q6).
 
@@ -174,16 +205,22 @@ class BedrockChatModel(ChatModel):
             {"type": "text", "text": volatile},
         ]
         wire_messages = _to_anthropic_messages(messages, draft_config, open_phase)
-        output_config: OutputConfigParam = {
-            "format": {"type": "json_schema", "schema": _DECISION_WIRE_SCHEMA}
-        }
         response = self._client.messages.create(
             model=self._model_id,
             max_tokens=self._max_tokens,
             thinking={"type": "adaptive"},
             system=system,
             messages=wire_messages,
-            output_config=output_config,
+            tools=[_DECISION_TOOL],
+            # DELIBERATELY NOT `tool_choice={"type": "tool", ...}`. Measured
+            # against the live Mantle endpoint on a task needing arithmetic:
+            # forcing the tool SUPPRESSES the thinking block entirely, so the
+            # model reasons inside the argument field instead — and it emitted
+            # an `answer` that contradicted its own `reason` (13 widgets vs the
+            # 12 it had just derived), in 676 output tokens. Unforced, on the
+            # identical prompt: thinking block present, answer correct and
+            # self-consistent, 331 tokens. Forcing costs accuracy AND doubles
+            # the bill; it is not the safe-looking option it appears to be.
         )
         # Filtering is required, not defensive: adaptive thinking means
         # `content` also carries ThinkingBlocks. Discriminate on `b.type`
@@ -191,8 +228,19 @@ class BedrockChatModel(ChatModel):
         # type narrowing AND is quietly worse at runtime, since an SDK rename
         # would yield no blocks and surface as a JSON decode error on "" instead
         # of an attribute error naming the real cause.
-        text = next((b.text for b in response.content if b.type == "text"), "")
-        decision = _parse_wire_decision(text)
+        tool_use = next((b for b in response.content if b.type == "tool_use"), None)
+        if tool_use is not None:
+            decision = _decision_from_mapping(dict(tool_use.input))
+        else:
+            # The model answered in prose instead of calling the tool. Rare,
+            # but `tool_choice` is unforced by design (see above), so it is
+            # reachable. The text is only parseable if it happens to be the
+            # JSON envelope; when it is not, json.loads raises and the turn
+            # becomes an in-stream RUN_ERROR, which is the honest outcome —
+            # inventing a decision here would put words in the operator's
+            # conversation that the model never chose.
+            text = next((b.text for b in response.content if b.type == "text"), "")
+            decision = _parse_wire_decision(text)
         decision.usage = _usage_from_response(response)
         return decision
 
@@ -253,8 +301,16 @@ def _to_anthropic_messages(
 
 
 def _parse_wire_decision(text: str) -> ModelDecision:
-    """Parse the model's JSON output into a ModelDecision (section_json → dict)."""
-    data = json.loads(text)
+    """Parse a JSON *string* decision into a ModelDecision.
+
+    The prose fallback path only — the tool path hands us an already-parsed
+    dict and calls `_decision_from_mapping` directly.
+    """
+    return _decision_from_mapping(json.loads(text))
+
+
+def _decision_from_mapping(data: dict[str, Any]) -> ModelDecision:
+    """Shared core: wire mapping → ModelDecision (section_json → dict)."""
     section = None
     section_json = data.get("section_json")
     if isinstance(section_json, str) and section_json.strip():
