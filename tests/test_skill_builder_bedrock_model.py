@@ -110,3 +110,36 @@ def test_request_declares_the_tool_and_does_not_force_it():
     assert "tool_choice" not in sent, "must stay unforced"
     assert "output_config" not in sent, "Mantle rejects output_config.format"
     assert sent["thinking"] == {"type": "adaptive"}
+
+
+def test_handle_turn_survives_an_empty_model_response():
+    """#27's explicit ask: drive `handle_turn`, not the parser.
+
+    An isolated parse test passes on well-formed text, and a `decide()` test
+    still stops short of the turn handler. This drives the real handler with a
+    real BedrockChatModel whose only fake is the provider response — the seam
+    where #27 actually broke — and asserts the turn degrades into an in-stream
+    RUN_ERROR rather than escaping as a 500.
+    """
+    from app.skill_builder.protocol.agui import EventType
+    from app.skill_builder.runtime import handle_turn
+
+    m = _model(_Response([_Block("thinking", thinking="...")], stop_reason="max_tokens"))
+
+    res = handle_turn(
+        {
+            "threadId": "t-27",
+            "messages": [
+                {"role": "user", "content": "start"},
+                {"role": "assistant", "content": "proposal"},
+                {"role": "user", "content": "ok"},
+            ],
+            "state": {"draftConfig": {}, "acceptance": {"geography": True}},
+            "forwardedProps": {"customer_context": {"organization_name": "ACME"}},
+        },
+        model=m,
+    )
+
+    types = [e.type for e in res.emitter.events]
+    assert EventType.RUN_ERROR in types, "must surface in-stream, not crash the invocation"
+    assert types[0] == EventType.RUN_STARTED, "stream must still open cleanly"
