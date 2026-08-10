@@ -112,3 +112,39 @@ def test_set_section_returns_new_config_and_patch():
     assert cfg["discovery"] == {}  # original untouched
     # The emitted delta, applied to the old config, reproduces the new one.
     assert draft.apply(cfg, patch)["discovery"] == section
+
+
+def test_section_wrapped_in_its_own_name_is_unwrapped():
+    """A live turn produced `{"geography": {...}}` as the geography BODY.
+
+    That lands as draftConfig.geography.geography and VALIDATES, because
+    sections are additionalProperties:true — so validation, the R12 lint, the
+    patch and the delta all pass and nothing reports it. Frontend cannot catch
+    it either: they capture event types, not delta payloads.
+    """
+    body = {"home_markets": {"context_ref": "home_markets"}, "targeting": {}}
+    cfg, patch = draft.set_section({}, "geography", {"geography": body})
+
+    assert cfg["geography"] == body, "should store the BODY, not the wrapper"
+    assert "geography" not in cfg["geography"], "double-nesting survived"
+    # The emitted delta is what the gateway applies, so it must carry the
+    # unwrapped value too — storing it correctly while emitting the wrapper
+    # would desync our draft from theirs.
+    assert draft.apply({}, patch)["geography"] == body
+
+
+def test_unwrap_leaves_legitimate_single_key_sections_alone():
+    """The guard must not 'fix' a partial body.
+
+    A section may legitimately carry one key — the discriminator is that the
+    key is NOT the phase name. Without this, an over-eager unwrap would
+    silently promote an inner object and lose the real body.
+    """
+    partial = {"targeting": {"geo_strictness": "metro"}}
+    cfg, _ = draft.set_section({}, "geography", partial)
+    assert cfg["geography"] == partial
+
+    # Same key as the phase but NOT an object → not the wrapping shape.
+    scalar = {"geography": "us-west"}
+    cfg2, _ = draft.set_section({}, "geography", scalar)
+    assert cfg2["geography"] == scalar

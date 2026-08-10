@@ -12,10 +12,13 @@ rather than hand-rolled ops, so array moves and nested edits are correct.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, cast
 
 import jsonpatch
+
+logger = logging.getLogger(__name__)
 
 # Slug convention (PRD §6, Q2): <vertical>-prospect-scanner. The gateway
 # resolves collisions (auto-suffix); we only propose.
@@ -123,7 +126,44 @@ def set_section(
 
     This is the per-phase revision primitive (PRD §7.2): propose or revise one
     section, get back the updated local draft plus the RFC 6902 delta to emit.
+
+    Self-wrapping is normalised here because this is the ONE owner of a section
+    write, so every path is covered by fixing it once.
     """
+    section = _unwrap_self_named(phase, section)
     after = apply(config, [{"op": "replace" if phase in config else "add",
                             "path": f"/{phase}", "value": section}])
     return after, diff(config, after)
+
+
+def _unwrap_self_named(phase: str, section: dict[str, Any]) -> dict[str, Any]:
+    """Undo a section body wrapped in its own name.
+
+    A live turn had the model return `{"geography": {...}}` as the body of the
+    geography section, which lands as `draftConfig.geography.geography`. That
+    shape **validates** — sections are `additionalProperties: true` — so the
+    config validator, the R12 lint, the patch application and the emitted delta
+    all pass, and the corruption is visible only to someone reading a payload
+    by eye.
+
+    It was fixed in the tool description first. That was not enough, and the
+    reason is worth keeping: the failure does not raise, so "wait and see if it
+    recurs" makes RECURRENCE THE DETECTOR for something that is silent by
+    construction. Prompt wording is a request; this is the check.
+
+    Deliberately narrow — unwrap only the unambiguous shape (exactly one key,
+    equal to the phase, holding an object). A partial body like
+    `{"targeting": {...}}` has one key that is NOT the phase and is untouched;
+    a real body has several. Logged at WARNING rather than repaired silently,
+    because a model that needs this repair is worth noticing.
+    """
+    if len(section) == 1:
+        (only_key,) = section
+        inner = section[only_key]
+        if only_key == phase and isinstance(inner, dict):
+            logger.warning(
+                "section %r was wrapped in its own name; unwrapping "
+                "(would have produced %s.%s)", phase, phase, phase
+            )
+            return cast("dict[str, Any]", inner)
+    return section
