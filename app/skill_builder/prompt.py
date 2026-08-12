@@ -238,7 +238,20 @@ def _type_hint(subschema: dict[str, Any], defs: dict[str, Any]) -> str:
         return "map of name -> " + _type_hint(additional, defs)
     declared = subschema.get("type", "value")
     if declared == "array":
-        return "list of " + str((subschema.get("items") or {}).get("type", "value"))
+        items = subschema.get("items")
+        items = items if isinstance(items, dict) else {}
+        # Name an object item's KEYS instead of rendering "list of object".
+        # Without this a declared `scoring.factors` renders as `list of object`
+        # and the model has to invent the entry shape — the same
+        # author-something-that-validates-and-is-ignored failure as #30, one
+        # level down. Required keys are marked so the difference between "must
+        # supply" and "may supply" survives into the prompt.
+        props = items.get("properties")
+        if isinstance(props, dict) and props:
+            required = {r for r in (items.get("required") or []) if isinstance(r, str)}
+            keys = [k if k in required else f"{k}?" for k in props]
+            return "list of {" + ", ".join(keys) + "}"
+        return "list of " + str(items.get("type", "value"))
     return str(declared)
 
 

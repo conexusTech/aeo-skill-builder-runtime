@@ -434,3 +434,61 @@ def test_prompt_tells_the_model_to_omit_default_and_says_why():
     assert "VERTICAL" in p
     # The asymmetry is the actual argument — loud failure beats quiet wrongness.
     assert "fails loudly" in p
+
+
+def test_a_declared_factors_renders_identically_to_the_pinned_fallback():
+    """The transition guarantee for #32: declaring `scoring` must be a no-op.
+
+    We teach `factors` today from a PINNED fallback because the schema declares
+    no `scoring` internals. That fallback is a second copy of backend's
+    vocabulary and it already went stale once in four hours, so it should die the
+    moment they declare the properties. This pins the condition that makes
+    deleting it safe: the DERIVED rendering and the fallback must agree.
+
+    It also covers the renderer gap that validating the #32 proposal exposed —
+    `_type_hint` used to render an array of objects as "list of object", losing
+    the entry shape entirely, which would have made the declared version teach
+    LESS than the fallback and reproduced #30 one level down.
+    """
+    import copy
+
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    declared = {
+        "allOf": [{"$ref": "#/$defs/section"}],
+        "properties": {
+            "factors": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["name", "weight"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "weight": {"type": "number"},
+                        "min": {"type": "number"},
+                        "max": {"type": "number"},
+                    },
+                },
+            }
+        },
+    }
+
+    schema = copy.deepcopy(contracts.config_schema())
+    fallback_line = next(
+        line.strip()
+        for line in _section_shapes_layer(schema).splitlines()
+        if line.strip().startswith("factors")
+    )
+
+    schema["properties"]["scoring"] = declared
+    derived_line = next(
+        line.strip()
+        for line in _section_shapes_layer(schema).splitlines()
+        if line.strip().startswith("factors")
+    )
+
+    assert "list of {name, weight, min?, max?}" in derived_line
+    assert derived_line.split("—")[1].strip() == fallback_line.split("—")[1].strip(), (
+        "derived and pinned renderings disagree, so deleting the fallback would "
+        "silently change what the model is taught"
+    )
