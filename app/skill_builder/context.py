@@ -37,6 +37,12 @@ CONTEXT_FENCE_CLOSE = "<<<END_CUSTOMER_CONTEXT_DATA>>>"
 _FENCE_REMOVED = "[fence-marker removed]"
 
 
+#: Industry values that carry no vertical information. `organization.industry` is
+#: an enum whose catch-all is the literal "Other"; treating it as a vertical makes
+#: the catalog match on a word that describes nothing and stamps it into the slug.
+_PLACEHOLDER_VERTICALS = frozenset({"other", "n/a", "na", "none", "unknown", "unspecified"})
+
+
 def _shape(value: Any) -> str:
     """A key's SHAPE for diagnostics — never its contents.
 
@@ -105,7 +111,7 @@ class CustomerContext:
 
     @property
     def vertical(self) -> str | None:
-        return _first_str(
+        value = _first_str(
             self.data,
             "vertical",
             "industry",
@@ -118,6 +124,23 @@ class CustomerContext:
             "organization.vertical",
             "onboarding_data.vertical",
         )
+        # 🔴 A PLACEHOLDER IS NOT A VERTICAL. `organization.industry` is an enum
+        # with a catch-all, and Lee Company's value is the literal "Other".
+        #
+        # Resolving it was still right — it was None on every session before —
+        # but returning it unguarded is worse than None in the one place it
+        # matters: `None` makes the R13 catalog ABSTAIN and the kickoff ASK the
+        # operator (the v7 fix for #27 §3), while "Other" makes it MATCH, report
+        # a confident negative, and persist the placeholder onward —
+        # `slug: "other-prospect-scanner"`, "skill for the Other vertical".
+        # That is a completed search that never ran, which is the self-
+        # perpetuating shape #27 §3 exists to stop.
+        #
+        # So: map the catch-alls back to None and let the ASK path own it. The
+        # operator knows their vertical; the enum's fallback does not.
+        if value is not None and value.strip().casefold() in _PLACEHOLDER_VERTICALS:
+            return None
+        return value
 
     @property
     def lead_type(self) -> str | None:

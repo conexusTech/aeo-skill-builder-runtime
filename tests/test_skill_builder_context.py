@@ -178,7 +178,21 @@ def test_first_message_facts_resolve_against_the_REAL_gateway_payload():
     # The bug: `icp.icp_attributes`, not `icp_attributes`.
     assert facts["icp"] == "multi-site facilities, owner-occupied"
     assert "unknown" not in facts["icp"]
-    # Found in the same capture: `organization.industry`, not `industry`.
-    # `vertical` feeds the R13 catalog match and the slug, so a None here is the
-    # unmatchable-skill defect (#27 §3) arriving by a different route.
-    assert ctx.vertical == "Other"
+    # Found in the same capture: `organization.industry`, not `industry` — the
+    # path was missing, so `vertical` was None on every real session.
+    #
+    # 🔴 But resolving it is NOT enough, and this asserts the difference. Lee
+    # Company's industry is the enum catch-all "Other". Returning that verbatim
+    # made the catalog MATCH on a word describing nothing, report a confident
+    # negative, and stamp `slug: "other-prospect-scanner"` into the draft —
+    # measured by aeo-frontend on v17 within minutes of the fix landing. A
+    # placeholder must read as ABSENT so the kickoff ASKS, which is the v7
+    # remedy for #27 §3.
+    assert ctx.vertical is None, "the enum catch-all must not become a vertical"
+
+    # ...and a genuine industry still resolves through the same new path, or the
+    # guard above would be indistinguishable from never having fixed the key.
+    real = {**_MEASURED_KICKOFF_CONTEXT,
+            "organization": {"name": "Lee Company", "industry": "HVAC"}}
+    from app.skill_builder.context import CustomerContext as _CC
+    assert _CC(real).vertical == "HVAC"
