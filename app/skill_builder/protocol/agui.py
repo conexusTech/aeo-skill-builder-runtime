@@ -518,11 +518,25 @@ class AGUIEmitter:
     # call sites type-checkable without the pydantic mypy plugin; the Python
     # attribute names stay snake_case per repo style.
     def run_started(self) -> None:
+        build = _build_version()
+        # Logged as well as emitted, and the asymmetry was a real gap: v10 stamped
+        # `runtimeVersion` on the wire for the GATEWAY's benefit, but our own logs
+        # never recorded it — so from CloudWatch, the one place the question gets
+        # asked during an incident, "which build served this turn?" was
+        # unanswerable. A session pins to the container it started on, so the
+        # configured version from `get-agent-runtime` is NOT the serving one, and
+        # inferring it from container start times is guesswork. That guesswork
+        # produced three false reproductions of an already-fixed defect in one
+        # afternoon (#27), and it stopped us attributing a turn on 2026-08-12.
+        # One line per turn is cheap next to that.
+        logger.info(
+            "turn start: build=%s thread=%s", build or "unstamped", self.thread_id
+        )
         self._append(
             RunStartedEvent(
                 threadId=self.thread_id,
                 runId=self.run_id,
-                runtimeVersion=_build_version(),
+                runtimeVersion=build,
             )
         )
 

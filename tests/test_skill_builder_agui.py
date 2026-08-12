@@ -212,3 +212,68 @@ def test_build_version_is_absent_rather_than_blank_by_default():
     from app.skill_builder.protocol.agui import _build_version
 
     assert _build_version() is None
+
+
+def test_run_started_logs_the_serving_build(caplog, monkeypatch):
+    """The build must reach the LOGS, not only the wire.
+
+    v10 stamped `runtimeVersion` on `RUN_STARTED` for the gateway and stopped
+    there, so CloudWatch — the one place the question is asked during an
+    incident — could not answer "which build served this turn?". A session pins
+    to the container it started on, so the version from `get-agent-runtime` is
+    the CONFIGURED one, not the serving one, and inferring it from container
+    start times is guesswork: that guesswork produced three false reproductions
+    of an already-fixed defect in a single afternoon.
+
+    Mutation check: delete the `logger.info` in `run_started` and this goes red.
+    """
+    import logging
+
+    from app.skill_builder.protocol import agui
+
+    monkeypatch.setattr(agui, "_build_version", lambda: "abc1234@deadbeef")
+    with caplog.at_level(logging.INFO, logger="app.skill_builder.protocol.agui"):
+        em = agui.AGUIEmitter(thread_id="t-1")
+        em.run_started()
+
+    logged = [r.getMessage() for r in caplog.records if "turn start" in r.getMessage()]
+    assert logged, "run_started logged nothing"
+    assert "abc1234@deadbeef" in logged[0]
+    assert "t-1" in logged[0]
+    # Still on the wire — the log is an addition, not a replacement.
+    assert em.wire_events()[0]["runtimeVersion"] == "abc1234@deadbeef"
+
+
+def test_an_unstamped_build_logs_unstamped_and_omits_the_wire_field():
+    """"This build does not stamp itself" and "the stamp says unknown" are
+    different facts. The wire OMITS the field (a consumer persisting the first
+    turn's value must tell a pre-v10 build apart from an unknown one); the log
+    says `unstamped` rather than an empty string, because a blank value in a log
+    line reads as a truncation bug."""
+    import logging
+
+    import pytest
+
+    from app.skill_builder.protocol import agui
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(agui, "_build_version", lambda: None)
+    try:
+        caplog_records = []
+        handler = logging.Handler()
+        handler.emit = lambda record: caplog_records.append(record.getMessage())
+        logger = logging.getLogger("app.skill_builder.protocol.agui")
+        logger.addHandler(handler)
+        old_level = logger.level
+        logger.setLevel(logging.INFO)
+        try:
+            em = agui.AGUIEmitter(thread_id="t-2")
+            em.run_started()
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(old_level)
+    finally:
+        mp.undo()
+
+    assert any("unstamped" in m for m in caplog_records)
+    assert "runtimeVersion" not in em.wire_events()[0]
