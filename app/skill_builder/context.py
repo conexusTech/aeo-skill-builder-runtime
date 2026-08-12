@@ -37,6 +37,22 @@ CONTEXT_FENCE_CLOSE = "<<<END_CUSTOMER_CONTEXT_DATA>>>"
 _FENCE_REMOVED = "[fence-marker removed]"
 
 
+def _shape(value: Any) -> str:
+    """A key's SHAPE for diagnostics — never its contents.
+
+    "empty list" and "absent" look identical in a log that prints only key names,
+    and they have different owners: one is the operator's onboarding to fill in,
+    the other is our reader looking in the wrong place.
+    """
+    if isinstance(value, (list, tuple, set)):
+        return f"list[{len(value)}]"
+    if isinstance(value, dict):
+        return f"dict[{len(value)}]"
+    if value in (None, ""):
+        return "empty"
+    return type(value).__name__
+
+
 def _first(data: dict[str, Any], *paths: str) -> Any:
     """Return the first present, non-empty value across candidate dotted paths.
 
@@ -170,9 +186,23 @@ class CustomerContext:
             # searching a key the ratified vocabulary does not use. The operator
             # message stays clean; the diagnosis goes to the logs, where it turns
             # "their data is broken" into "we read the wrong name" in one line.
+            # ⚠️ Log ONE LEVEL DEEPER than feels necessary. The first version of
+            # this line reported only top-level keys, and on the first real turn
+            # it proved `icp` was present while leaving the actual question —
+            # what is INSIDE it — unanswerable. That is the same error as the bug
+            # it was added to diagnose: naming the container instead of looking
+            # in it. Keys only, never values: structure is diagnosable, customer
+            # text is not ours to put in a log.
+            container = self.data.get("icp") if isinstance(self.data, dict) else None
             logger.info(
-                "icp unresolved: searched=%s context_top_level_keys=%s",
-                ["icp_summary", "icp_attributes", "icp_seeds", "onboarding_data.*"],
+                "icp unresolved: searched=%s icp_container=%s top_level=%s",
+                ["icp.icp_attributes", "icp.top_customers", "icp_summary",
+                 "icp_attributes", "icp_seeds", "onboarding_data.*"],
+                (
+                    {k: _shape(v) for k, v in sorted(container.items())}
+                    if isinstance(container, dict)
+                    else type(container).__name__
+                ),
                 sorted(self.data)[:20] if isinstance(self.data, dict) else type(self.data).__name__,
             )
         return {
