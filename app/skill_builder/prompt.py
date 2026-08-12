@@ -183,11 +183,18 @@ def _type_hint(subschema: dict[str, Any], defs: dict[str, Any]) -> str:
 #: guessed: one sentence is too little because `discoverySource.queries`' first
 #: sentence is "Search templates, passed to the model VERBATIM", which drops
 #: `{market}` entirely — the single most expensive rule in the scanner's history.
-#: Its sentences end at 47 / 120 / 383 / 541 chars, and the third is the
+#: Its sentences end at 47 / 120 / 328 / 486 chars, and the third is the
 #: national-registry exception that stops `{market}` being taught as an absolute
 #: (the mistake this replaced). 400 keeps three and drops the fourth, which is
-#: meta-commentary about schema-enforceability the model cannot act on. Every
-#: other description in the contract is ≤ 170, so this affects exactly one field.
+#: meta-commentary about schema-enforceability the model cannot act on.
+#:
+#: Re-measured 2026-08-12 after backend moved the Austin war story out of that
+#: `description` into `$comment_war_story` (thread #28): the boundaries were
+#: 47/120/383/541 and the longest other rendered note was 170. Both numbers had
+#: to move, which is the point of recording them — a stale measurement is how the
+#: next person re-derives the wrong budget. Today nothing is truncated at all
+#: (328 < 400); the budget now bounds the FOURTH sentence and future growth
+#: rather than trimming anything present. Longest other rendered note: 220.
 _NOTE_BUDGET = 400
 
 
