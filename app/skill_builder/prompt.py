@@ -237,9 +237,20 @@ def _type_hint(subschema: dict[str, Any], defs: dict[str, Any]) -> str:
 #: `description` into `$comment_war_story` (thread #28): the boundaries were
 #: 47/120/383/541 and the longest other rendered note was 170. Both numbers had
 #: to move, which is the point of recording them — a stale measurement is how the
-#: next person re-derives the wrong budget. Today nothing is truncated at all
-#: (328 < 400); the budget now bounds the FOURTH sentence and future growth
-#: rather than trimming anything present. Longest other rendered note: 220.
+#: next person re-derives the wrong budget.
+#:
+#: 🔴 Re-measured AGAIN 2026-08-12 (same day) when `discovery.entries_per_query` was
+#: declared: it is 501 chars over 4 sentences (61/288/327/501), so 400 keeps three
+#: and DROPS THE FOURTH — and here the fourth is *"Raise it when a vertical is
+#: dense enough … keep it low when searches return a few strong ones and a long
+#: tail of noise"*, i.e. the only guidance on HOW TO CHOOSE a value. That is the
+#: opposite of the case this budget was tuned against, where the dropped sentence
+#: was meta-commentary about schema-enforceability. **The budget is no longer
+#: obviously right, and the fix is probably backend leading with the actionable
+#: sentence rather than us raising the cap** — raising it to ~520 would also
+#: restore `queries`' fourth sentence, which cites a source file and is noise to a
+#: model. Raised with them; do not "fix" this by bumping the number silently.
+#: Longest other rendered note is now 327 (was 220).
 _NOTE_BUDGET = 400
 
 
