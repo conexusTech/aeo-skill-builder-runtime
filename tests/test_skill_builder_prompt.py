@@ -242,6 +242,11 @@ def test_scoring_teaches_the_engines_knobs_and_never_invites_invention():
     # last two (`av_lead_scanner.py:938-939`), and a consumed-key lint built from
     # the short list would tell the model to delete two keys that do take effect.
     for knob in (
+        # `factors` came LAST chronologically and is FIRST in importance: the
+        # engine began reading it on 2026-08-12, hours after the other seven were
+        # pinned, and it is now the 40-point ICP-fit axis. A skill authored
+        # without it loses that axis entirely.
+        "factors",
         "completeness", "fit", "region_bonus", "multi_source",
         "pipeline", "ai_adjustment", "score_cap",
     ):

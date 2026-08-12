@@ -166,6 +166,24 @@ _SHAPED_SECTIONS = ("geography", "discovery", "validation", "contacts", "scoring
 #: cannot. Until then a wrong-but-close vocabulary beats an invitation to invent.
 _UNRATIFIED_SECTION_KNOBS: dict[str, tuple[tuple[str, str, str], ...]] = {
     "scoring": (
+        # 🔴 FIRST, and it is the axis the operator's own ICP rides on. Added
+        # 2026-08-12 (hours after the seven knobs) because the engine started
+        # reading it that afternoon: `scoring.factors` was authored-and-ignored
+        # for this feature's whole life, and is now the LARGEST axis at 40
+        # points — above pipeline's 30 — replacing the keyword table that tied
+        # scoring to one industry. A skill authored without it loses the whole
+        # ICP-fit axis, which is worse than the mismatched factor names that
+        # prompted the fix.
+        (
+            "factors",
+            "list of {name, weight, min?, max?}",
+            "THE ICP-FIT AXIS and the largest one, so author it. Each `name` MUST "
+            "match a field this config's own discovery sources collect, or the "
+            "factor scores zero forever; `weight` is relative to the other "
+            "factors; presence of any value earns full credit unless `min`/`max` "
+            "are given, which turn presence into a threshold (an ICP bound like "
+            "square footage >= 10000 belongs here, not only in prose).",
+        ),
         ("completeness", "object", "how many expected fields a record filled in"),
         ("fit", "object", "keyword scoring over the record's description text"),
         ("region_bonus", "object", "bonus when a prospect sits in a targeted region"),
