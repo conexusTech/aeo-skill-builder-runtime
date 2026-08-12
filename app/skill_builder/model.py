@@ -267,7 +267,7 @@ class BedrockChatModel(ChatModel):
         )
         if response.stop_reason == "max_tokens":
             logger.warning(
-                "model hit max_tokens (%s) — thinking and answer share this "
+                "model hit max_tokens (%s) - thinking and answer share this "
                 "budget, so the decision may be truncated or absent",
                 self._max_tokens,
             )
@@ -291,7 +291,7 @@ class BedrockChatModel(ChatModel):
             # same JSONDecodeError as `json.loads("")`, so the two look identical
             # in a stack trace while having different causes.
             logger.warning(
-                "no tool call (stop_reason=%s, blocks=%s) — retrying once with "
+                "no tool call (stop_reason=%s, blocks=%s) - retrying once with "
                 "tool_choice forced",
                 response.stop_reason,
                 [b.type for b in response.content],

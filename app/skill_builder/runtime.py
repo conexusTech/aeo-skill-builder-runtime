@@ -69,6 +69,16 @@ def handle_turn(
         run_input = RunAgentInput.model_validate(payload)
     except ValidationError as exc:
         emitter = AGUIEmitter(thread_id=thread_id)
+        # Logged because this path is otherwise INVISIBLE: it emits an in-stream
+        # RUN_ERROR and still returns HTTP 200, so in CloudWatch it looked
+        # identical to a healthy kickoff (a bare `POST /invocations 200`). The
+        # detail stays here rather than on the wire for the usual reason - a
+        # ValidationError echoes back the payload we were sent.
+        logger.warning(
+            "turn rejected: malformed RunAgentInput (%s error(s), thread_id=%s)",
+            exc.error_count(),
+            thread_id,
+        )
         emitter.run_error(f"malformed RunAgentInput: {exc.error_count()} error(s)",
                           code="invalid_input")
         return TurnResult(emitter, "")
@@ -427,6 +437,15 @@ def _after_tool(emitter: AGUIEmitter, ctx: CustomerContext, pending: Any) -> str
     phase iteration; a decline/success is surfaced conversationally. Never
     terminal except a successful finalize."""
     result = tools.parse_tool_result(pending)
+    # This path calls no model, so it emits no `decide:` line and used to be
+    # indistinguishable from a kickoff in the logs - which meant the first
+    # `request_test_run` and `request_finalize` ever executed on this feature
+    # (2026-08-12) left NO trace in the runtime's own logs. A tool result is the
+    # single most interesting event a turn can carry; it should not be the
+    # quietest.
+    logger.info(
+        "tool result received: tool=%s status=%s", result.tool_name, result.status
+    )
     tools.handle_tool_result(emitter, result)
     return _system_prompt(
         ctx, task=f"Discuss the {result.tool_name} result (status: {result.status})."

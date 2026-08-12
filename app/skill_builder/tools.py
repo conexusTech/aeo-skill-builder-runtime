@@ -249,12 +249,25 @@ def _emit_or_block(
         # value would put a string on the wire no consumer can render while
         # every gate still looked green. `phase` is optional by contract, so
         # populating it is strictly additive.
+        # Both outcomes are logged because NEITHER was: a tool call is a request
+        # for the gateway to spend real money (a test scan) or to make a skill
+        # permanent, and until now the runtime recorded neither the request nor
+        # the refusal. From outside, "the model never tried" and "we blocked it"
+        # looked the same - and the second is a repairable state the operator is
+        # sitting in.
+        logger.info(
+            "tool call BLOCKED: tool=%s issues=%s locations=%s",
+            tool.value,
+            len(issues),
+            [i.location for i in issues],
+        )
         emitter.interrupt(
             InterruptReason.AWAITING_PHASE_ACCEPTANCE,
             phase=_phase_from_issues(issues),
         )
         return ToolCallOutcome(requested=False, issues=issues)
     tool_call_id = emitter.tool_call(tool.value, args)
+    logger.info("tool call emitted: tool=%s id=%s", tool.value, tool_call_id)
     return ToolCallOutcome(requested=True, tool_call_id=tool_call_id)
 
 

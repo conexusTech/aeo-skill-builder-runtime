@@ -340,3 +340,61 @@ def test_phase_is_none_when_no_issue_belongs_to_a_section():
     assert tools._phase_from_issues(
         [ValidationIssue(location="vertical", message="missing")]
     ) is None
+
+
+# --- observability (thread #30 / 2026-08-12) --------------------------------
+
+
+def test_tool_call_emission_and_blocking_are_both_logged(caplog):
+    """Neither outcome was logged, and the gap was measured, not theorised.
+
+    A tool call asks the gateway to spend real money (a test scan) or to make a
+    skill permanent. Watching frontend's first full E2E from CloudWatch, the
+    first `request_test_run` and `request_finalize` ever executed on this
+    feature produced NO runtime log line at all - the turn that carried them
+    was a bare `POST /invocations 200`, byte-identical to a kickoff.
+
+    Blocking is logged too, and separately: from outside, "the model never
+    tried" and "we refused" looked the same, and the second leaves the operator
+    sitting in a repairable state nobody can see.
+    """
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="app.skill_builder.tools"):
+        em = AGUIEmitter()
+        tools.request_test_run(em, _complete_config(), notes="smoke")
+    emitted = [r.getMessage() for r in caplog.records if "emitted" in r.getMessage()]
+    assert emitted, "an emitted tool call logged nothing"
+    assert "request_test_run" in emitted[0]
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="app.skill_builder.tools"):
+        em = AGUIEmitter()
+        tools.request_test_run(em, {"geography": {}})
+    blocked = [r.getMessage() for r in caplog.records if "BLOCKED" in r.getMessage()]
+    assert blocked, "a blocked tool call logged nothing"
+    assert "request_test_run" in blocked[0]
+
+
+def test_log_format_strings_stay_ascii():
+    """Non-ASCII in a log message is not cosmetic here.
+
+    The AWS CLI renders an em-dash in a log message as a byte invalid in the
+    shell's locale, and GNU grep then declares the whole stream binary and
+    prints "Binary file (standard input) matches" INSTEAD OF THE LINES. On
+    2026-08-12 that silently blanked batches of CloudWatch output while a live
+    E2E was being watched - and the messages carrying em-dashes were the
+    failure ones ("no tool call ... - retrying", "model hit max_tokens ... -").
+    Blindness that only occurs during failures is worse than no monitoring.
+    """
+    import re
+    from pathlib import Path
+
+    offenders = []
+    for path in Path("app/skill_builder").rglob("*.py"):
+        src = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"logger\.\w+\(\s*\n?\s*\"([^\"]*)\"", src):
+            text = match.group(1)
+            if any(ord(ch) > 127 for ch in text):
+                offenders.append(f"{path}: {text[:60]}")
+    assert not offenders, "non-ASCII log format strings:\n" + "\n".join(offenders)
