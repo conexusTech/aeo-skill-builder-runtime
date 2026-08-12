@@ -196,3 +196,28 @@ def test_first_message_facts_resolve_against_the_REAL_gateway_payload():
             "organization": {"name": "Lee Company", "industry": "HVAC"}}
     from app.skill_builder.context import CustomerContext as _CC
     assert _CC(real).vertical == "HVAC"
+
+
+def test_icp_accepts_a_STRING_shape_not_only_a_list():
+    """The shape that made #35 look fixed by a logging-only release.
+
+    v17 and v18 have byte-identical ICP resolution paths — the only difference
+    between them is the literal list inside a log message — yet the ICP resolved
+    on v18 and not v17. Our code cannot have caused that, and it did not:
+    `icp.icp_attributes` was arriving as a STRING, falling through the list and
+    dict branches, and returning None. It began resolving when backend corrected
+    the shape to a real array. The credit is theirs; the fragility was ours.
+
+    A reader that accepts one of three plausible shapes reports an operator's
+    data as MISSING whenever the shape moves — the accusation-against-the-data
+    failure #35 is entirely about.
+    """
+    from app.skill_builder.context import CustomerContext
+
+    assert CustomerContext(
+        {"icp": {"icp_attributes": "multi-site facilities owner-occupied"}}
+    ).icp_summary == "multi-site facilities owner-occupied"
+    # Whitespace-only is still absent — the guard must not manufacture presence.
+    assert CustomerContext({"icp": {"icp_attributes": "   "}}).icp_summary is None
+    # And the other two shapes still work; this was additive.
+    assert CustomerContext({"icp": {"icp_attributes": ["a", "b"]}}).icp_summary == "a, b"

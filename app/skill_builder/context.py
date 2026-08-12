@@ -194,6 +194,21 @@ class CustomerContext:
             return ", ".join(str(s) for s in seeds[:5])
         if isinstance(seeds, dict) and seeds:
             return json.dumps(seeds, separators=(",", ":"))[:400]
+        # A STRING is a legitimate shape and we were dropping it on the floor.
+        # This is what actually made #35 look fixed by v18: the paths in v17 and
+        # v18 are byte-identical (only the log message's literal list differs),
+        # so our code cannot be what changed the outcome. `icp.icp_attributes`
+        # was arriving as a string, fell through both isinstance checks, and
+        # returned None — indistinguishable from absent. It began resolving when
+        # BACKEND corrected the shape to a real array, and the credit belongs
+        # there.
+        #
+        # Handling the string too, because the shape is not ours to depend on:
+        # aeo-frontend reports the ICP still arriving space-concatenated in
+        # another form, so a reader that only accepts one of three shapes will
+        # keep reporting an operator's data as missing.
+        if isinstance(seeds, str) and seeds.strip():
+            return seeds.strip()[:400]
         return None
 
     def first_message_facts(self) -> dict[str, str]:
