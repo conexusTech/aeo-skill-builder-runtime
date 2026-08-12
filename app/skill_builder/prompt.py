@@ -146,53 +146,18 @@ _SHAPED_SECTIONS = ("geography", "discovery", "validation", "contacts", "scoring
 
 #: Section internals the SCHEMA does not declare but the scan engine really reads.
 #:
-#: 🔴 Why this exists (thread #30). `scoring` was never ratified — #17/#18 folded
-#: FOUR section shapes into the schema and this was not one of them — so it is a
-#: bare `$ref` with no `properties`. The layer therefore rendered "internals not
-#: yet specified, author what the vertical needs", which is an instruction to
-#: INVENT. It was taken up: two sessions on one runtime produced two incompatible
-#: scoring shapes (`factors[]` in one, `weights{}` in the other), both passed
-#: every gate, and the engine silently ignored both. The first real customer scan
-#: ranked HVAC prospects on a scoring model none of its config had touched.
+#: ✅ EMPTY AS OF 2026-08-13, and that is the goal state rather than an oversight.
+#: It held `scoring`'s seven-then-eight knobs for one day, because the schema
+#: declared no `scoring` internals and the alternative was rendering "internals not
+#: yet specified", which is what caused #30. It was a second copy of backend's
+#: vocabulary and it went stale in FOUR HOURS (the engine began reading `factors`
+#: the same afternoon), which is the whole argument that landed #32.
 #:
-#: The names are the engine's, read at `av_lead_scanner.py:933-939` — five via
-#: `_deep_get` plus `ai_adjustment` and `score_cap`. ⚠️ SEVEN, not five: the
-#: cross-repo answer that gave us this list omitted the last two, and a lint built
-#: from the short list would tell the model to delete two working keys. Verified
-#: against `_DEFAULT_SCORING`'s own keys, not transcribed from the message.
-#:
-#: DELETE THIS when backend declares `scoring`'s properties in the schema. It is a
-#: second copy of someone else's contract and will drift; the schema-derived path
-#: cannot. Until then a wrong-but-close vocabulary beats an invitation to invent.
-_UNRATIFIED_SECTION_KNOBS: dict[str, tuple[tuple[str, str, str], ...]] = {
-    "scoring": (
-        # 🔴 FIRST, and it is the axis the operator's own ICP rides on. Added
-        # 2026-08-12 (hours after the seven knobs) because the engine started
-        # reading it that afternoon: `scoring.factors` was authored-and-ignored
-        # for this feature's whole life, and is now the LARGEST axis at 40
-        # points — above pipeline's 30 — replacing the keyword table that tied
-        # scoring to one industry. A skill authored without it loses the whole
-        # ICP-fit axis, which is worse than the mismatched factor names that
-        # prompted the fix.
-        (
-            "factors",
-            "list of {name, weight, min?, max?}",
-            "THE ICP-FIT AXIS and the largest one, so author it. Each `name` MUST "
-            "match a field this config's own discovery sources collect, or the "
-            "factor scores zero forever; `weight` is relative to the other "
-            "factors; presence of any value earns full credit unless `min`/`max` "
-            "are given, which turn presence into a threshold (an ICP bound like "
-            "square footage >= 10000 belongs here, not only in prose).",
-        ),
-        ("completeness", "object", "how many expected fields a record filled in"),
-        ("fit", "object", "keyword scoring over the record's description text"),
-        ("region_bonus", "object", "bonus when a prospect sits in a targeted region"),
-        ("multi_source", "object", "bonus when several sources found the same firm"),
-        ("pipeline", "object", "timing/stage weighting toward a buying decision"),
-        ("ai_adjustment", "object", "bounds on the model's own score nudge"),
-        ("score_cap", "integer", "ceiling for the total score"),
-    ),
-}
+#: Backend now declares `scoring`'s properties, so the layer derives them and the
+#: copy is gone. Keep this hook: a future unratified section lands here rather than
+#: in the permissive wording, and an EMPTY entry makes the per-section guard raise
+#: — which is the loud failure we want, not a silent stale pin.
+_UNRATIFIED_SECTION_KNOBS: dict[str, tuple[tuple[str, str, str], ...]] = {}
 
 #: Rendered under an unratified section, once. Both sentences are load-bearing and
 #: were paid for in production: the engine merges an override with a SHALLOW

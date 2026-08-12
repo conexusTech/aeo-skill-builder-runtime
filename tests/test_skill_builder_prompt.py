@@ -254,9 +254,20 @@ def test_scoring_teaches_the_engines_knobs_and_never_invites_invention():
 
     assert "not yet specified" not in rendered
     assert "author what the" not in rendered
-    # The shallow-merge warning is load-bearing: `_deep_get` does dict.update, so
-    # a partial override silently discards the sub-keys it did not restate.
-    assert "REPLACES" in rendered
+    # 🔴 The prompt must NOT claim an override replaces a knob's sub-keys.
+    # v13-v15 said: "An override REPLACES a knob's sub-keys wholesale rather than
+    # merging, so restate every sub-key you want kept." That is FALSE.
+    # `_deep_get` is `dict(default)` + `.update(override)` — a SHALLOW MERGE, so
+    # sub-keys the config does not mention are KEPT from the engine default.
+    #
+    # It was not a harmless inaccuracy: a model following "restate every sub-key
+    # you want kept" on `fit` would have copied the engine's church-AV
+    # `keyword_scores` verbatim into an HVAC config — manufacturing the exact
+    # cross-vertical contamination #30 exists to remove. It never fired because
+    # no skill has been authored since v12. Removed with the pinned fallback on
+    # 2026-08-13; asserted absent so it cannot return.
+    assert "REPLACES" not in rendered
+    assert "restate every sub-key" not in rendered
 
 
 # --- renderer robustness, from the 2026-08-05 audit pass ---------------------
@@ -436,59 +447,48 @@ def test_prompt_tells_the_model_to_omit_default_and_says_why():
     assert "fails loudly" in p
 
 
-def test_a_declared_factors_renders_identically_to_the_pinned_fallback():
-    """The transition guarantee for #32: declaring `scoring` must be a no-op.
+def test_scoring_is_now_DERIVED_and_the_pinned_fallback_is_gone():
+    """#32 landed: backend declared `scoring`'s properties, so the copy dies.
 
-    We teach `factors` today from a PINNED fallback because the schema declares
-    no `scoring` internals. That fallback is a second copy of backend's
-    vocabulary and it already went stale once in four hours, so it should die the
-    moment they declare the properties. This pins the condition that makes
-    deleting it safe: the DERIVED rendering and the fallback must agree.
+    `_UNRATIFIED_SECTION_KNOBS` held that vocabulary for exactly one day and went
+    stale inside four hours — the engine began reading `factors` the same
+    afternoon it was pinned, and our drift test structurally could not notice
+    because there was no declared property to differ from. The derived path
+    cannot drift, which is the entire point of the exchange that removed it.
 
-    It also covers the renderer gap that validating the #32 proposal exposed —
-    `_type_hint` used to render an array of objects as "list of object", losing
-    the entry shape entirely, which would have made the declared version teach
-    LESS than the fallback and reproduced #30 one level down.
+    Asserted on the RENDERED line rather than on the constant: an empty dict
+    proves nothing about what the model is handed.
+    """
+    from app.skill_builder.prompt import _UNRATIFIED_SECTION_KNOBS, _section_shapes_layer
+
+    assert _UNRATIFIED_SECTION_KNOBS == {}, "the fallback should be empty once declared"
+
+    rendered = _section_shapes_layer(contracts.config_schema())
+    scoring = rendered[rendered.index("  scoring:"):]
+    # The entry shape must survive derivation — `_type_hint` expanding an array's
+    # `items` is what makes that true; without it this reads "list of object".
+    assert "list of {name, weight, min?, max?" in scoring
+    # And the key OUR proposed fragment omitted, which backend caught.
+    assert "disqualify_below" in scoring
+    assert "not yet specified" not in rendered
+
+
+def test_an_undeclared_section_now_raises_rather_than_using_a_stale_pin():
+    """With the fallback empty, the per-section guard is the only path left.
+
+    That is deliberate. A future unratified section should fail LOUDLY here
+    rather than quietly render whatever a months-old transcription happened to
+    say — the failure mode #30 produced, and the reason the copy was deleted
+    rather than merely emptied of `scoring`.
     """
     import copy
 
+    import pytest
+
     from app.skill_builder.prompt import _section_shapes_layer
 
-    declared = {
-        "allOf": [{"$ref": "#/$defs/section"}],
-        "properties": {
-            "factors": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["name", "weight"],
-                    "properties": {
-                        "name": {"type": "string"},
-                        "weight": {"type": "number"},
-                        "min": {"type": "number"},
-                        "max": {"type": "number"},
-                    },
-                },
-            }
-        },
-    }
-
     schema = copy.deepcopy(contracts.config_schema())
-    fallback_line = next(
-        line.strip()
-        for line in _section_shapes_layer(schema).splitlines()
-        if line.strip().startswith("factors")
-    )
-
-    schema["properties"]["scoring"] = declared
-    derived_line = next(
-        line.strip()
-        for line in _section_shapes_layer(schema).splitlines()
-        if line.strip().startswith("factors")
-    )
-
-    assert "list of {name, weight, min?, max?}" in derived_line
-    assert derived_line.split("—")[1].strip() == fallback_line.split("—")[1].strip(), (
-        "derived and pinned renderings disagree, so deleting the fallback would "
-        "silently change what the model is taught"
-    )
+    schema["properties"]["scoring"].pop("properties", None)
+    schema["properties"]["scoring"].pop("allOf", None)
+    with pytest.raises(ValueError, match="scoring"):
+        _section_shapes_layer(schema)
