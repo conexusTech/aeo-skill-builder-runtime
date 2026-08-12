@@ -93,6 +93,12 @@ class CustomerContext:
             self.data,
             "vertical",
             "industry",
+            # `organization.industry` is what the live payload carries (measured
+            # 2026-08-13 alongside the ICP miss). Without it `vertical` was None
+            # on every real session, which feeds the R13 catalog match and the
+            # slug — the same silent-degradation family as the ICP, found in the
+            # same capture.
+            "organization.industry",
             "organization.vertical",
             "onboarding_data.vertical",
         )
@@ -132,6 +138,14 @@ class CustomerContext:
             # while the ICP was present and approved — reproduced across three
             # sessions, and it looked like missing DATA rather than a reader
             # reading the wrong name.
+            # ⚠️ MEASURED, not assumed. The gateway sends a top-level `icp`
+            # OBJECT whose members are the ratified keys — `icp.icp_attributes`,
+            # not `icp_attributes`. v16 added the flat spellings from reading the
+            # vocabulary file and shipped WITHOUT fixing the live payload, because
+            # the test used a shape I invented rather than the one backend
+            # measured. Every path below now appears in a real capture.
+            "icp.icp_attributes",
+            "icp.top_customers",
             "icp_attributes",
             "onboarding_data.icp_attributes",
             "icp_seeds",

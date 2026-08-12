@@ -127,3 +127,58 @@ def test_icp_reads_the_RATIFIED_key_not_only_the_legacy_one():
     assert CustomerContext({"icp_summary": "explicit"}).icp_summary == "explicit"
     # And genuine absence must still report absence, or the fix hides real gaps.
     assert CustomerContext({"organization_name": "ACME"}).icp_summary is None
+
+
+#: The customer_context the gateway ACTUALLY sends, captured by aeo-backend on
+#: 2026-08-13 by calling `runtimeContext.getContext(orgId, slug)` through a real
+#: Nest context for Lee Company + `hvac-prospect-scanner` (#35). Trimmed to the
+#: keys we read; the shape is verbatim.
+#:
+#: 🔴 This fixture exists because the first fix for #35 was written against a
+#: shape I INVENTED from reading the vocabulary file — flat `icp_attributes` —
+#: and shipped as v16 without resolving the live payload at all. The real
+#: payload nests the ratified keys under a top-level `icp` OBJECT. A green test
+#: over an imagined payload is worse than no test: it retires the suspicion.
+_MEASURED_KICKOFF_CONTEXT = {
+    "skill": {},
+    "context_version": 1,
+    "organization": {"name": "Lee Company", "industry": "Other"},
+    "products_services": [],
+    "personas": [],
+    "lead_type": "MIXED",
+    "geography": {"home_markets": ["Nashville"], "include_scope": "metro"},
+    "icp": {
+        "disqualifiers": [],
+        "top_customers": [{"name": "acct"}],
+        "icp_attributes": ["multi-site facilities", "owner-occupied"],
+        "in_market_signals": [],
+        "lookalike_sources": [],
+    },
+    "decision_makers": {"seniorities": [], "decision_titles": []},
+    "scoring_strategy": {},
+    "lead_scoring": {},
+}
+
+
+def test_first_message_facts_resolve_against_the_REAL_gateway_payload():
+    """The one test that would have caught #35 — and caught my own bad fix.
+
+    Every fact the opening message states must resolve from the payload the
+    gateway really sends. Asserting on a hand-made dict is what let the ICP read
+    as absent through three production sessions AND through a fix that claimed
+    to repair it.
+    """
+    from app.skill_builder.context import CustomerContext
+
+    ctx = CustomerContext(_MEASURED_KICKOFF_CONTEXT)
+    facts = ctx.first_message_facts()
+
+    assert facts["customer"] == "Lee Company"
+    assert facts["lead_type"] == "MIXED"
+    # The bug: `icp.icp_attributes`, not `icp_attributes`.
+    assert facts["icp"] == "multi-site facilities, owner-occupied"
+    assert "unknown" not in facts["icp"]
+    # Found in the same capture: `organization.industry`, not `industry`.
+    # `vertical` feeds the R13 catalog match and the slug, so a None here is the
+    # unmatchable-skill defect (#27 §3) arriving by a different route.
+    assert ctx.vertical == "Other"
