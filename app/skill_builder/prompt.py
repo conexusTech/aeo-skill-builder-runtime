@@ -245,12 +245,17 @@ def _type_hint(subschema: dict[str, Any], defs: dict[str, Any]) -> str:
 #: dense enough … keep it low when searches return a few strong ones and a long
 #: tail of noise"*, i.e. the only guidance on HOW TO CHOOSE a value. That is the
 #: opposite of the case this budget was tuned against, where the dropped sentence
-#: was meta-commentary about schema-enforceability. **The budget is no longer
-#: obviously right, and the fix is probably backend leading with the actionable
-#: sentence rather than us raising the cap** — raising it to ~520 would also
-#: restore `queries`' fourth sentence, which cites a source file and is noise to a
-#: model. Raised with them; do not "fix" this by bumping the number silently.
-#: Longest other rendered note is now 327 (was 220).
+#: was meta-commentary about schema-enforceability.
+#: ✅ **RESOLVED the same afternoon, and NOT by moving this number.** Backend
+#: reordered the description to lead with the actionable sentence; it is now 320
+#: chars and renders in FULL. Raising the cap to ~520 would have worked for that
+#: field and dragged `queries`' fourth sentence back in — a source-file citation
+#: that is noise to a model — so the cheap fix belonged to the field's owner, not
+#: here. **The general rule this establishes: when a description does not fit,
+#: reorder it so the actionable sentence survives truncation; do not raise the
+#: budget to accommodate one field.** Their schema now carries a
+#: `$comment_ordering` saying sentence order is load-bearing because we render
+#: these. Longest rendered note remains `queries` at 328.
 _NOTE_BUDGET = 400
 
 
