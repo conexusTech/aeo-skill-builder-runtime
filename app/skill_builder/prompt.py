@@ -144,6 +144,51 @@ def _as_dict(value: Any) -> dict[str, Any]:
 #: Sections whose internals the config schema declares, in authoring order.
 _SHAPED_SECTIONS = ("geography", "discovery", "validation", "contacts", "scoring")
 
+#: Section internals the SCHEMA does not declare but the scan engine really reads.
+#:
+#: 🔴 Why this exists (thread #30). `scoring` was never ratified — #17/#18 folded
+#: FOUR section shapes into the schema and this was not one of them — so it is a
+#: bare `$ref` with no `properties`. The layer therefore rendered "internals not
+#: yet specified, author what the vertical needs", which is an instruction to
+#: INVENT. It was taken up: two sessions on one runtime produced two incompatible
+#: scoring shapes (`factors[]` in one, `weights{}` in the other), both passed
+#: every gate, and the engine silently ignored both. The first real customer scan
+#: ranked HVAC prospects on a scoring model none of its config had touched.
+#:
+#: The names are the engine's, read at `av_lead_scanner.py:933-939` — five via
+#: `_deep_get` plus `ai_adjustment` and `score_cap`. ⚠️ SEVEN, not five: the
+#: cross-repo answer that gave us this list omitted the last two, and a lint built
+#: from the short list would tell the model to delete two working keys. Verified
+#: against `_DEFAULT_SCORING`'s own keys, not transcribed from the message.
+#:
+#: DELETE THIS when backend declares `scoring`'s properties in the schema. It is a
+#: second copy of someone else's contract and will drift; the schema-derived path
+#: cannot. Until then a wrong-but-close vocabulary beats an invitation to invent.
+_UNRATIFIED_SECTION_KNOBS: dict[str, tuple[tuple[str, str, str], ...]] = {
+    "scoring": (
+        ("completeness", "object", "how many expected fields a record filled in"),
+        ("fit", "object", "keyword scoring over the record's description text"),
+        ("region_bonus", "object", "bonus when a prospect sits in a targeted region"),
+        ("multi_source", "object", "bonus when several sources found the same firm"),
+        ("pipeline", "object", "timing/stage weighting toward a buying decision"),
+        ("ai_adjustment", "object", "bounds on the model's own score nudge"),
+        ("score_cap", "integer", "ceiling for the total score"),
+    ),
+}
+
+#: Rendered under an unratified section, once. Both sentences are load-bearing and
+#: were paid for in production: the engine merges an override with a SHALLOW
+#: `dict.update`, so a partial `fit` silently discards the sibling sub-keys it did
+#: not restate; and an omitted knob keeps a default carried over from the vertical
+#: the engine was originally written for, which is how HVAC prospects came to be
+#: scored on church-construction keywords and clustered at 11-12 out of 100.
+_UNRATIFIED_SECTION_NOTE = (
+    "These are the ONLY keys the engine reads here; any other key is accepted "
+    "and then ignored. An override REPLACES a knob's sub-keys wholesale rather "
+    "than merging, so restate every sub-key you want kept. An omitted knob keeps "
+    "an engine default that may have been tuned for a different vertical."
+)
+
 
 def _type_hint(subschema: dict[str, Any], defs: dict[str, Any]) -> str:
     """A one-phrase description of what a declared property accepts.
@@ -281,14 +326,58 @@ def _section_shapes_layer(config_schema: dict[str, Any]) -> str:
     declared = 0
     for name in _SHAPED_SECTIONS:
         section = _as_dict(_as_dict(config_schema).get("properties")).get(name)
-        props = _as_dict(section).get("properties")
-        props = props if isinstance(props, dict) else {}
+        raw_props = _as_dict(section).get("properties")
+        props = raw_props if isinstance(raw_props, dict) else {}
+        # A section that is simply UNRATIFIED (well-formed, no `properties`) is a
+        # different thing from one that is MALFORMED (not an object, or
+        # `properties` is a list). The first is a contract gap we must refuse to
+        # paper over; the second is an odd node, and this renderer runs inside
+        # compose() on every turn against a swappable schema — so raising there
+        # is a dead conversation, not a worse prompt. Only the first may raise.
+        # Three cases, not two. ABSENT (the schema does not carry the section at
+        # all) is a broken pin and must raise. MALFORMED (present but the wrong
+        # shape) is an odd node and must be tolerated. UNRATIFIED (present, well
+        # formed, no `properties`) is the #30 case: raise unless knobs are pinned.
+        malformed = section is not None and (
+            not isinstance(section, dict)
+            or (raw_props is not None and not isinstance(raw_props, dict))
+        )
         if not props:
-            # `scoring` is declared but its internals are not ratified. Say so
-            # rather than omitting the section, or its absence reads as "do not
-            # author it" — and a config with no scoring ranks nothing.
-            lines.append(f"  {name}: internals not yet specified — author what the")
-            lines.append("    vertical needs; absence ranks nothing, so do not omit it.")
+            # The schema declares this section but not its internals. This used
+            # to render "internals not yet specified — author what the vertical
+            # needs", and a model read that as licence: thread #30's first real
+            # customer scan ran on a scoring shape the engine never looked at.
+            # Never describe an unknown shape to a model in the permissive voice.
+            knobs = _UNRATIFIED_SECTION_KNOBS.get(name)
+            if knobs is None:
+                if malformed:
+                    # Degrade CLOSED, never permissive: say nothing may be
+                    # authored rather than inviting the model to fill the gap.
+                    # A thinner prompt is recoverable; an invented section that
+                    # validates and is then ignored is not.
+                    lines.append(f"  {name}:")
+                    lines.append(
+                        "      This section's shape is unavailable. Do not author "
+                        "keys here; ask the operator to report a schema problem."
+                    )
+                    continue
+                # Per-section, NOT the all-empty check below. That one fires only
+                # when the whole vocabulary is missing, so it was silent for the
+                # single unratified section we actually shipped — the reasoning
+                # was right and the threshold was wrong.
+                raise ValueError(
+                    f"the config schema declares no internals for section "
+                    f"{name!r} and no engine knob list is pinned for it — "
+                    "refusing to render a shapes layer that would tell the "
+                    "model to invent them. Declare the section's properties in "
+                    "the schema, or pin its knobs in _UNRATIFIED_SECTION_KNOBS."
+                )
+            lines.append(f"  {name}:")
+            for key, hint, note in knobs:
+                declared += 1
+                lines.append(f"    {key} — {hint}")
+                lines.append(f"        {note}")
+            lines.append(f"      {_UNRATIFIED_SECTION_NOTE}")
             continue
         lines.append(f"  {name}:")
         for key, sub in props.items():

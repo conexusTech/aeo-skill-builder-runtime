@@ -221,15 +221,37 @@ def test_a_direct_context_ref_property_is_not_re_expanded():
     assert "Well-known org context-field key" not in rendered
 
 
-def test_scoring_is_named_as_unspecified_rather_than_omitted():
-    """Its internals were never ratified. Omitting the section would read as "do
-    not author it", and a config with no scoring ranks nothing — so a caller
-    reading a top-N slice gets an arbitrary one."""
+def test_scoring_teaches_the_engines_knobs_and_never_invites_invention():
+    """`scoring` was never ratified into the schema (#17/#18 ratified four
+    section shapes; this was not one), so the layer used to render "internals not
+    yet specified — author what the vertical needs". A model read that as licence:
+    thread #30's first real customer scan ranked HVAC prospects with a scoring
+    shape the engine never looked at, and two sessions on one runtime invented
+    two incompatible shapes that both passed every gate.
+
+    The permissive wording is the defect, so it is asserted absent — not merely
+    the knobs asserted present. A future edit could reintroduce the invitation
+    alongside the knob list and the positive assertion alone would stay green.
+    """
     from app.skill_builder.prompt import _section_shapes_layer
 
     rendered = _section_shapes_layer(contracts.config_schema())
     assert "scoring" in rendered
-    assert "not yet specified" in rendered
+
+    # SEVEN, not five. The cross-repo answer that supplied this list omitted the
+    # last two (`av_lead_scanner.py:938-939`), and a consumed-key lint built from
+    # the short list would tell the model to delete two keys that do take effect.
+    for knob in (
+        "completeness", "fit", "region_bonus", "multi_source",
+        "pipeline", "ai_adjustment", "score_cap",
+    ):
+        assert knob in rendered, f"engine knob {knob!r} is not taught"
+
+    assert "not yet specified" not in rendered
+    assert "author what the" not in rendered
+    # The shallow-merge warning is load-bearing: `_deep_get` does dict.update, so
+    # a partial override silently discards the sub-keys it did not restate.
+    assert "REPLACES" in rendered
 
 
 # --- renderer robustness, from the 2026-08-05 audit pass ---------------------
@@ -282,7 +304,34 @@ def test_a_schema_declaring_no_section_internals_raises():
     schema = copy.deepcopy(contracts.config_schema())
     for section in ("geography", "discovery", "validation", "contacts", "scoring"):
         schema["properties"].pop(section, None)
-    with pytest.raises(ValueError, match="declares no section internals"):
+    with pytest.raises(ValueError, match="declares no internals for section"):
+        _section_shapes_layer(schema)
+
+
+def test_an_unratified_section_without_pinned_knobs_raises_per_section():
+    """The guard that existed before #30 fired only when EVERY section was empty.
+
+    That threshold is why it was silent for the one unratified section we
+    actually shipped: `scoring` alone rendered "author what the vertical needs"
+    while the other four were declared, so `declared` stayed non-zero and the
+    all-empty check never ran. The reasoning was right and the threshold was
+    wrong — so the guard is asserted PER SECTION here.
+
+    Mutation-checked at the CALL SITE, not on a helper: delete the `raise` in
+    `_section_shapes_layer` and this goes red.
+    """
+    import copy
+
+    import pytest
+
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    # `contacts` is declared today; strip only its internals so the section is
+    # present and well formed but carries no shape — the exact `scoring` case,
+    # on a section with no pinned knob list to fall back to.
+    schema = copy.deepcopy(contracts.config_schema())
+    schema["properties"]["contacts"].pop("properties", None)
+    with pytest.raises(ValueError, match="contacts"):
         _section_shapes_layer(schema)
 
 
