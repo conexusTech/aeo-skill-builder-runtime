@@ -90,3 +90,40 @@ def test_prompt_block_is_byte_stable_for_caching():
     first = CustomerContext(dict(data)).as_prompt_block()
     second = CustomerContext(dict(data)).as_prompt_block()
     assert first == second
+
+
+def test_icp_reads_the_RATIFIED_key_not_only_the_legacy_one():
+    """#35: the kickoff reported "no ICP data in context" while the ICP was
+    present and approved, across three sessions.
+
+    Cause was ours and it was a NAME: the closed vocabulary in
+    `context-field-keys.json` declares exactly one ICP field, `icp_attributes`,
+    and this reader searched `icp_summary` / `icp_seeds` — the older Phase 2.1
+    foundation-skill spelling we never moved off. So a context carrying the
+    canonical key rendered as absent.
+
+    The failure mode is the one this feature keeps producing: it accused the
+    DATA. Nothing errored, the turn succeeded, and the operator was told their
+    onboarding was empty.
+
+    Asserted against the ratified list itself rather than a literal, so renaming
+    the key upstream fails here instead of silently reverting the bug.
+    """
+    from app.skill_builder import contracts
+    from app.skill_builder.context import CustomerContext
+
+    icp_keys = [k for k in contracts.context_field_keys() if "icp" in k]
+    assert icp_keys == ["icp_attributes"], (
+        "the ratified ICP key changed; update the reader in context.py to match"
+    )
+
+    key = icp_keys[0]
+    assert CustomerContext({key: ["fleet operators", "multi-site"]}).icp_summary == (
+        "fleet operators, multi-site"
+    )
+    assert CustomerContext({"onboarding_data": {key: ["HVAC"]}}).icp_summary == "HVAC"
+    # Legacy spellings still work — this was additive, not a swap.
+    assert CustomerContext({"icp_seeds": ["legacy"]}).icp_summary == "legacy"
+    assert CustomerContext({"icp_summary": "explicit"}).icp_summary == "explicit"
+    # And genuine absence must still report absence, or the fix hides real gaps.
+    assert CustomerContext({"organization_name": "ACME"}).icp_summary is None

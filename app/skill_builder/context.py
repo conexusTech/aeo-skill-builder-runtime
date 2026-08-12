@@ -21,7 +21,10 @@ Two jobs:
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Sentinel fence markers. The baseline prompt layer (app.skill_builder.prompt)
 # tells the model that everything between these markers is untrusted data.
@@ -118,7 +121,22 @@ class CustomerContext:
         )
         if isinstance(explicit, str):
             return explicit
-        seeds = _first(self.data, "icp_seeds", "onboarding_data.icp_seeds")
+        seeds = _first(
+            self.data,
+            # 🔴 `icp_attributes` FIRST, because it is the RATIFIED key and the
+            # others are not. The closed vocabulary in `context-field-keys.json`
+            # names exactly one ICP field and this is it; `icp_seeds` is the older
+            # Phase 2.1 foundation-skill spelling that we never moved off.
+            # Consequence (#35): on a context carrying the canonical key, the
+            # kickoff told the operator "ICP: unknown (no ICP data in context)"
+            # while the ICP was present and approved — reproduced across three
+            # sessions, and it looked like missing DATA rather than a reader
+            # reading the wrong name.
+            "icp_attributes",
+            "onboarding_data.icp_attributes",
+            "icp_seeds",
+            "onboarding_data.icp_seeds",
+        )
         if isinstance(seeds, list) and seeds:
             return ", ".join(str(s) for s in seeds[:5])
         if isinstance(seeds, dict) and seeds:
@@ -130,10 +148,23 @@ class CustomerContext:
         (PRD §5). Missing values are rendered as an explicit 'unknown' string so
         the opener still surfaces the gap rather than silently omitting it —
         which is exactly the wrong-org signal the operator watches for."""
+        icp = self.icp_summary
+        if icp is None:
+            # Say WHAT WE LOOKED FOR, not just that we found nothing. #35 took
+            # three sessions and a cross-repo thread because the operator-facing
+            # string reports missing DATA, while the actual cause was this reader
+            # searching a key the ratified vocabulary does not use. The operator
+            # message stays clean; the diagnosis goes to the logs, where it turns
+            # "their data is broken" into "we read the wrong name" in one line.
+            logger.info(
+                "icp unresolved: searched=%s context_top_level_keys=%s",
+                ["icp_summary", "icp_attributes", "icp_seeds", "onboarding_data.*"],
+                sorted(self.data)[:20] if isinstance(self.data, dict) else type(self.data).__name__,
+            )
         return {
             "customer": self.organization_name or "unknown (no organization name in context)",
             "lead_type": self.lead_type or "unknown",
-            "icp": self.icp_summary or "unknown (no ICP data in context)",
+            "icp": icp or "unknown (no ICP data in context)",
         }
 
     def as_prompt_block(self) -> str:
