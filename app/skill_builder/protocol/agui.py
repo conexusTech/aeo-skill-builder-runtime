@@ -114,6 +114,27 @@ class ForwardedProps(BaseModel):
 
     customer_context: dict[str, Any] = Field(default_factory=dict, alias="customer_context")
     catalog: list[dict[str, Any]] = Field(default_factory=list)
+    #: Whether this session is authoring a new skill or revising an existing one
+    #: (skill-update thread U1 / ruling 6). Absent means `build`, so existing
+    #: gateway traffic is unchanged and neither repo has to deploy first.
+    #:
+    #: A plain `str`, deliberately NOT a `Literal`. A Literal would make an
+    #: unrecognised value fail envelope parsing, i.e. kill the whole turn with a
+    #: RUN_ERROR — the opposite of this model's `extra="ignore"` posture, which
+    #: exists so the gateway can grow the envelope without breaking us. An
+    #: unknown mode degrades to `build`, which is the behaviour every session had
+    #: before this field existed.
+    mode: str = "build"
+
+    @property
+    def is_edit(self) -> bool:
+        """True only for an explicit edit session.
+
+        Fails CLOSED: anything unrecognised reads as a build. Getting this
+        backwards would route a normal build into the edit kickoff, which does
+        not seed a skeleton — so the session would start with no config at all.
+        """
+        return self.mode.strip().lower() == "edit"
 
 
 class RunAgentInput(BaseModel):

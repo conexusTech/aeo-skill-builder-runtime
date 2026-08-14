@@ -35,7 +35,7 @@ from app.skill_builder.context import CustomerContext
 from app.skill_builder.model import ChatModel, ModelDecision
 from app.skill_builder.prompt import compose
 from app.skill_builder.protocol.agui import AGUIEmitter, InterruptReason, RunAgentInput
-from app.skill_builder.state import BuilderState
+from app.skill_builder.state import PHASES, BuilderState
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,16 @@ def handle_turn(
         if pending is not None:
             system_prompt = _after_tool(emitter, ctx, pending)
         elif run_input.is_kickoff:
-            system_prompt = _kickoff(emitter, run_input, ctx)
+            # An edit session is a kickoff by definition — the gateway sends an
+            # empty transcript, so no assistant message exists yet. It must NOT
+            # take the build path: that one overwrites `draft_config` with a
+            # fresh skeleton and snapshots it, which discards the seeded skill
+            # before the operator has typed anything (U1 premise 4).
+            system_prompt = (
+                _kickoff_edit(emitter, run_input, ctx)
+                if run_input.forwarded_props.is_edit
+                else _kickoff(emitter, run_input, ctx)
+            )
         else:
             system_prompt = _continue(emitter, run_input, ctx, model)
         return TurnResult(emitter, system_prompt)
@@ -204,6 +213,91 @@ def _kickoff(
     ))
 
 
+#: Task for the first turn of an EDIT session.
+#:
+#: It has to say what NOT to do as much as what to do. Every other kickoff task
+#: tells the model to begin authoring, and the section-proposal machinery is
+#: identical in both modes — so without an explicit instruction the model would
+#: re-run the five-section interview over a skill the operator considers
+#: finished, which is the whole complaint U1 was raised about.
+_EDIT_KICKOFF_TASK = (
+    "This is an EDIT session: the skill already exists and its five sections are "
+    "already authored and accepted. Do NOT re-interview the operator, do NOT "
+    "re-propose sections they have not asked about, and do not treat the existing "
+    "config as a draft you are completing.\n"
+    "Confirm the customer and the skill being edited, then ask what they want to "
+    "change. Act only on what they name: re-open exactly that section with "
+    "`propose_section`, carrying every other value through unchanged."
+)
+
+
+def _kickoff_edit(
+    emitter: AGUIEmitter, run_input: RunAgentInput, ctx: CustomerContext
+) -> str:
+    """First turn of an edit session (skill-update thread U1 / D).
+
+    Differs from `_kickoff` in three ways, each deliberate:
+
+      * **No skeleton, no STATE_SNAPSHOT.** The gateway seeded `draft_config`
+        from the existing skill and holds the same bytes, so the delta base is
+        already shared. §4's snapshot-first rule exists because the base is
+        ambiguous on a FIRST proposal; here there is nothing ambiguous to
+        resolve, and emitting one would only re-assert what both sides have.
+      * **No catalog match.** The library-first pitch (R13) asks "there is
+        already a skill for this vertical, connect it or build new?" — in an
+        edit session that hit is most likely the org's OWN skill, and neither
+        offered option is the one the operator chose.
+      * **It still reflects the customer.** §5's wrong-org check is the reason
+        the opener states the customer at all, and an edit is exactly as capable
+        of being pointed at the wrong org as a build.
+    """
+    config = run_input.state.draft_config
+    authored = [phase for phase in PHASES if config.get(phase)]
+    if not authored:
+        # Refuse rather than fall back to the build kickoff. Falling back looks
+        # harmless (there is no config to destroy) and is the dangerous option:
+        # the operator would author a skill from scratch inside a session the
+        # gateway believes is an edit, and finalize would then overwrite the
+        # existing skill's config with it. An empty seed means the gateway's
+        # seeding step did not run, which is a defect to surface, not to absorb.
+        logger.warning(
+            "edit kickoff refused: mode=edit but draft_config carries no authored "
+            "section (thread_id=%s, config_keys=%s)",
+            run_input.thread_id,
+            sorted(config),
+        )
+        emitter.run_error(
+            "This session was opened to edit an existing skill, but no existing "
+            "configuration arrived with it. Close it and start the edit again.",
+            code="invalid_input",
+        )
+        return ""
+
+    facts = ctx.first_message_facts()
+    name = config.get("name")
+    slug = config.get("slug")
+    label = f"'{name}'" if isinstance(name, str) and name.strip() else "this skill"
+    if isinstance(slug, str) and slug.strip():
+        label += f" ({slug})"
+
+    emitter.message(
+        f"You're editing {label} for {facts['customer']} (lead type: "
+        f"{facts['lead_type']}; ICP: {facts['icp']}). All five sections — "
+        "geography, discovery, validation, contacts, and scoring — are already "
+        "settled, so we don't need to walk through them again. Tell me what you "
+        "want to change and I'll re-open just that section."
+    )
+    # `step` is a LOAD-BEARING closed-ish vocabulary: `awaiting_decision` is
+    # emitted at five gates and the UI picks its control from `step` alone, so an
+    # invented value renders as the wrong control (or none) while every gate
+    # still reports success. `kickoff_confirmation` is the existing value whose
+    # affordance matches what happens next here - the operator replies in prose.
+    # If aeo-frontend wants to distinguish the edit opener, that is a new pinned
+    # value and a cross-repo announcement, not a local choice; asked on U1.
+    emitter.interrupt(InterruptReason.AWAITING_DECISION, step="kickoff_confirmation")
+    return _system_prompt(ctx, task=_EDIT_KICKOFF_TASK)
+
+
 def _continue(
     emitter: AGUIEmitter,
     run_input: RunAgentInput,
@@ -269,7 +363,13 @@ def _continue(
     # the RUN_FINISHED still carries a correct outcome (#14).
     if decision.usage is not None:
         emitter.record_usage(decision.usage)
-    _apply_decision(emitter, state, decision, open_phase=phase)
+    _apply_decision(
+        emitter,
+        state,
+        decision,
+        open_phase=phase,
+        edit_mode=run_input.forwarded_props.is_edit,
+    )
     return composition.render()
 
 
@@ -330,7 +430,11 @@ def _phase_task(state: BuilderState, phase: str | None) -> str:
 
 
 def _apply_vertical(
-    emitter: AGUIEmitter, state: BuilderState, decision: ModelDecision
+    emitter: AGUIEmitter,
+    state: BuilderState,
+    decision: ModelDecision,
+    *,
+    edit_mode: bool = False,
 ) -> None:
     """Record a vertical the model obtained from the operator, and re-derive the slug.
 
@@ -353,6 +457,21 @@ def _apply_vertical(
         return
 
     patch = [{"op": "add", "path": "/vertical", "value": supplied}]
+    if edit_mode:
+        # NEVER re-derive the slug while editing. The skill already exists and is
+        # connected, and aeo-frontend confirmed `skills.slug` is load-bearing
+        # downstream (`runtime_slug`, the catalog `taskRef`) — so re-deriving it
+        # renames a live skill and breaks references that name it by slug.
+        #
+        # An explicit guard rather than the coincidence that used to cover this:
+        # the early return above means a config carrying a vertical never reaches
+        # here, and a finalized skill always carries one because both finalize
+        # gates refuse a null vertical. That is two other components' behaviour
+        # protecting this one. Relaxing either would silently arm the rename, and
+        # nothing here would look different. (U1 / 🅕 "guard it", 2026-08-14.)
+        state.draft_config = draft.apply(state.draft_config, patch)
+        emitter.state_delta(patch)
+        return
     slug = draft.build_slug(supplied)
     if state.draft_config.get("slug") != slug:
         patch.append(
@@ -372,10 +491,11 @@ def _apply_decision(
     decision: ModelDecision,
     *,
     open_phase: str | None,
+    edit_mode: bool = False,
 ) -> None:
     """Turn a ModelDecision into protocol events (PRD §7.2). All validation and
     emission live here; the model only decides."""
-    _apply_vertical(emitter, state, decision)
+    _apply_vertical(emitter, state, decision, edit_mode=edit_mode)
 
     if decision.action == "propose_section":
         phase = decision.phase or open_phase or ""
