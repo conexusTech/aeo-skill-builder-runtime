@@ -321,9 +321,13 @@ def _continue(
     # that whole surface — and #13.7's divergence check with it — dead code.
     all_accepted = state.all_phases_accepted()
     phase = None if all_accepted else state.next_open_phase()
+    task = _ALL_ACCEPTED_TASK if all_accepted else _phase_task(state, phase)
     composition = compose(
         customer_context=ctx,
-        task=_ALL_ACCEPTED_TASK if all_accepted else _phase_task(state, phase),
+        # The vertical instruction leads, because it gates whether the section
+        # work is even usable: five sections authored for a vertical the config
+        # never recorded still cannot finalize.
+        task=_vertical_task_prefix(state, ctx) + task,
         tools=contracts.tool_schemas(),
         context_field_keys=contracts.context_field_keys(),
         config_positions=contracts.config_positions(),
@@ -429,6 +433,73 @@ def _phase_task(state: BuilderState, phase: str | None) -> str:
     return f"Propose the '{phase}' section."
 
 
+def _has_vertical(config: dict[str, Any]) -> bool:
+    """Whether the draft already carries a usable vertical.
+
+    ONE predicate, shared by the instruction and by `_apply_vertical`'s
+    don't-overwrite guard, because they have to agree about what "missing" means.
+    They did not when this was inlined twice: `_apply_vertical` treats a
+    whitespace-only value as a gap it may fill, while a plain truthiness check
+    reads "   " as present and would have silenced the instruction for it. That is
+    the same two-layers-disagreeing shape this whole change exists to fix, so it
+    is not left to a comment (cf. U1's duplicate `vertical` check, found inside the
+    helper extracted to prevent exactly this).
+    """
+    value = config.get("vertical")
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _vertical_task_prefix(state: BuilderState, ctx: CustomerContext) -> str:
+    """Instruction carried on EVERY authoring turn while the config has no vertical.
+
+    The vertical reaches the draft through exactly one route — `_apply_vertical`
+    reading `ModelDecision.vertical` — and the only place that was ever asked for
+    is the wire schema's field description: emit it *"ONLY when you had to ask the
+    operator for it because it was missing from the customer context"*.
+
+    🔴 On a placeholder industry that precondition reads FALSE to the model.
+    `CustomerContext.vertical` maps "Other" to None, which is what makes the
+    kickoff ASK, but `as_prompt_block` serializes the raw blob, so the model still
+    sees `industry: "Other"` and nothing looks missing. Two layers disagreeing
+    about what counts as a missing vertical is what produced sessions where the
+    model confirmed a vertical in prose, authored five sections for it, and
+    finalized `vertical: null` with the degenerate `prospect-scanner` slug —
+    measured on real data by aeo-frontend, 6 of 12 sessions (2026-08-17).
+
+    The kickoff's request is an OPERATOR-facing message, and by the turn the
+    answer arrives the task is `_phase_task`'s "Propose the '<phase>' section",
+    which never mentions the vertical. So the capture window was the single turn
+    the operator answered on, with no instruction inside it, and nothing reopened
+    it afterwards. Deriving this from the config instead of remembering that we
+    asked keeps it present on every turn until the value lands, and removes it by
+    itself once it has.
+
+    Scope is `_continue` (the authoring turns) deliberately: an edit session's
+    config always carries a vertical — `_apply_vertical` early-returns on one, and
+    both finalize gates refuse a null — so this stays silent there rather than
+    nagging about a value that is already set.
+    """
+    if _has_vertical(state.draft_config):
+        return ""
+    if ctx.industry_is_placeholder:
+        reason = (
+            "the `industry` in the customer context is a catch-all placeholder, "
+            "not a real vertical, so it must NOT be read as the answer"
+        )
+    else:
+        reason = "the customer context carries no industry at all"
+    # ASCII only: this string is emitted into a prompt that is byte-compared by
+    # the cache breakpoint and read back in logs.
+    return (
+        f"The customer's VERTICAL is still unknown: {reason}. It cannot be "
+        "inferred from the rest of the context. If the operator has stated it "
+        "anywhere in this conversation, return it in the `vertical` field of this "
+        "turn's decision (short and canonical, e.g. 'HVAC', 'insurance'); saying "
+        "it in your message does NOT record it. If they have not stated it, ask "
+        "before proposing anything that depends on it.\n\n"
+    )
+
+
 def _apply_vertical(
     emitter: AGUIEmitter,
     state: BuilderState,
@@ -452,8 +523,7 @@ def _apply_vertical(
     supplied = (decision.vertical or "").strip()
     if not supplied:
         return
-    existing = state.draft_config.get("vertical")
-    if isinstance(existing, str) and existing.strip():
+    if _has_vertical(state.draft_config):
         return
 
     patch = [{"op": "add", "path": "/vertical", "value": supplied}]

@@ -575,6 +575,117 @@ def test_a_supplied_vertical_is_recorded_and_re_derives_the_slug():
     assert paths.get("/draftConfig/slug") == "auto-parts-prospect-scanner"
 
 
+#: The lead sentence of the per-turn vertical instruction.
+_VERTICAL_ASK = "The customer's VERTICAL is still unknown"
+
+
+def _rendered(payload):
+    """The prompt the model is actually handed for `payload`.
+
+    Asserting on the rendered prompt rather than on a task helper: the defect
+    these cover is an instruction that never REACHED the model, so a unit test
+    over the string builder would have passed throughout.
+    """
+    seen: dict[str, str] = {}
+
+    class _CapturePrompt(FakeChatModel):
+        def decide(self, *, prompt, **kwargs):
+            seen["rendered"] = prompt.render()
+            return ModelDecision(action="await_human", message="ok")
+
+    handle_turn(payload, model=_CapturePrompt(None))
+    return seen["rendered"]
+
+
+def _continuation_with_ctx(ctx, draft_config=None):
+    payload = _continuation({}, draft_config=draft_config)
+    payload["forwardedProps"]["customer_context"] = ctx
+    return payload
+
+
+def test_an_authoring_turn_asks_for_the_vertical_when_the_config_has_none():
+    """The production defect: the kickoff asks the OPERATOR, and by the turn they
+    answer the task is `Propose the 'geography' section` — nothing anywhere told
+    the MODEL to return that answer in `vertical`. So it landed only when the
+    model volunteered an optional field, and 6 of 12 real sessions finalized
+    `vertical: null` with the degenerate `prospect-scanner` slug after the agent
+    had confirmed a vertical in prose (aeo-frontend, 2026-08-17).
+
+    The old `test_a_supplied_vertical_is_recorded_and_re_derives_the_slug` could
+    not catch it: it injects `vertical="auto parts"` into the decision, i.e. it
+    only ever covered the branch that already worked.
+    """
+    rendered = _rendered(_continuation({}, draft_config={"geography": {}}))
+
+    assert _VERTICAL_ASK in rendered
+    assert "`vertical` field of this" in rendered
+    # The distinction the model kept getting wrong: prose is not persistence.
+    assert "does NOT record it" in rendered
+
+
+def test_a_placeholder_industry_is_named_as_the_reason_and_contradicted():
+    """`vertical` maps "Other" to None, but `as_prompt_block` serializes the raw
+    blob, so the model still sees `industry: "Other"`. The instruction has to
+    contradict the data explicitly — otherwise the model believes the blob over
+    us, which is precisely the state that shipped.
+    """
+    rendered = _rendered(_continuation_with_ctx(
+        {"organization_name": "Lee Company", "organization": {"industry": "Other"}}
+    ))
+
+    assert _VERTICAL_ASK in rendered
+    assert "catch-all placeholder" in rendered
+    assert "must NOT be read as the answer" in rendered
+
+
+def test_a_wholly_absent_industry_gets_the_other_reason():
+    """Two different causes, two different sentences. If both said "no industry",
+    the placeholder case would keep contradicting a value the model can see."""
+    rendered = _rendered(_continuation_with_ctx({"organization_name": "ACME"}))
+
+    assert _VERTICAL_ASK in rendered
+    assert "carries no industry at all" in rendered
+    assert "catch-all placeholder" not in rendered
+
+
+def test_the_vertical_request_disappears_once_the_config_carries_one():
+    """Derived from the config rather than remembered, so it stops by itself.
+
+    Load-bearing for edit sessions: their config always carries a vertical (both
+    finalize gates refuse a null), so without this they would be nagged on every
+    turn to chase a value that is already set.
+    """
+    rendered = _rendered(_continuation({}, draft_config={"vertical": "HVAC"}))
+
+    assert _VERTICAL_ASK not in rendered
+    assert "catch-all placeholder" not in rendered
+
+
+def test_a_blank_vertical_still_counts_as_missing_for_both_readers():
+    """`_apply_vertical` treats a whitespace-only vertical as a gap it may fill.
+    A plain truthiness check would read "   " as PRESENT and go silent, so the
+    instruction and the overwrite guard would disagree about what missing means --
+    the same two-readers-disagree defect this change fixes, reintroduced one layer
+    down. They now share `_has_vertical`.
+    """
+    rendered = _rendered(_continuation({}, draft_config={"vertical": "   "}))
+    assert _VERTICAL_ASK in rendered, "a blank vertical must still be asked for"
+
+    # ...and the other reader agrees: it fills the blank rather than preserving it.
+    model = FakeChatModel(ModelDecision(
+        action="await_human", message="ok", vertical="insurance",
+    ))
+    res = handle_turn(
+        _continuation({}, draft_config={"vertical": "   "}), model=model
+    )
+    ops = [
+        op for e in res.emitter.wire_events() if e["type"] == "STATE_DELTA"
+        for op in e["delta"]
+    ]
+    paths = {op["path"]: op["value"] for op in ops}
+    assert paths.get("/draftConfig/vertical") == "insurance"
+
+
 def test_a_context_supplied_vertical_is_never_overwritten():
     """The org's runtime context is authoritative; the ask exists only to fill
     a genuine gap."""

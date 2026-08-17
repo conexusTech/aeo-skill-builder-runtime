@@ -109,9 +109,15 @@ class CustomerContext:
             "org.name",
         )
 
-    @property
-    def vertical(self) -> str | None:
-        value = _first_str(
+    def _industry_value(self) -> str | None:
+        """The industry/vertical exactly as the customer blob carries it, BEFORE
+        the placeholder mapping.
+
+        Private on purpose: a caller wants either a usable vertical or the
+        placeholder FACT, never the raw catch-all — returning "Other" to anything
+        that treats it as a vertical is the defect `vertical` exists to stop.
+        """
+        return _first_str(
             self.data,
             "vertical",
             "industry",
@@ -124,6 +130,30 @@ class CustomerContext:
             "organization.vertical",
             "onboarding_data.vertical",
         )
+
+    @property
+    def industry_is_placeholder(self) -> bool:
+        """True when the blob DOES carry an industry and it is a catch-all.
+
+        `vertical` collapses "no industry at all" and "industry is the literal
+        'Other'" onto the same None. That is right for the catalog match and the
+        slug, and wrong for instructing the model: only the second case leaves a
+        POPULATED `industry` inside the fenced blob, and the model reads that as
+        the answer already being present.
+
+        The wire schema asks for `ModelDecision.vertical` "ONLY when you had to
+        ask the operator for it because it was missing from the customer
+        context" — a precondition that reads FALSE from inside the prompt on
+        exactly these sessions. Keeping the two cases distinguishable is what
+        lets the per-turn task say WHY the vertical is still unknown instead of
+        contradicting the data the model can see.
+        """
+        value = self._industry_value()
+        return value is not None and value.strip().casefold() in _PLACEHOLDER_VERTICALS
+
+    @property
+    def vertical(self) -> str | None:
+        value = self._industry_value()
         # 🔴 A PLACEHOLDER IS NOT A VERTICAL. `organization.industry` is an enum
         # with a catch-all, and Lee Company's value is the literal "Other".
         #

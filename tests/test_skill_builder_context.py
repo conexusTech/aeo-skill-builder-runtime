@@ -198,6 +198,36 @@ def test_first_message_facts_resolve_against_the_REAL_gateway_payload():
     assert _CC(real).vertical == "HVAC"
 
 
+def test_a_placeholder_industry_stays_distinguishable_from_no_industry():
+    """`vertical` collapses both to None, and for the catalog and the slug that is
+    right. For the PROMPT it is not: only the placeholder case leaves a populated
+    `industry` inside the fenced blob, which the model reads as the vertical
+    already being known — so the schema's "missing from the customer context"
+    precondition for `ModelDecision.vertical` reads FALSE exactly here.
+
+    That disagreement is what let 6 of 12 real sessions finalize `vertical: null`
+    after the model confirmed a vertical in prose (aeo-frontend, 2026-08-17).
+    """
+    placeholder = CustomerContext(_MEASURED_KICKOFF_CONTEXT)
+    assert placeholder.vertical is None
+    assert placeholder.industry_is_placeholder is True
+
+    absent = CustomerContext({"organization": {"name": "ACME"}})
+    assert absent.vertical is None
+    # Same `vertical`, different REASON. Collapsing these is the bug.
+    assert absent.industry_is_placeholder is False
+
+    real = CustomerContext({"organization": {"name": "X", "industry": "HVAC"}})
+    assert real.vertical == "HVAC"
+    assert real.industry_is_placeholder is False
+
+    # Every catch-all in the set, not just the one Lee Company happens to carry.
+    for value in ("Other", "  n/a  ", "NONE", "unspecified", "Unknown"):
+        ctx = CustomerContext({"organization": {"industry": value}})
+        assert ctx.industry_is_placeholder is True, value
+        assert ctx.vertical is None, value
+
+
 def test_icp_accepts_a_STRING_shape_not_only_a_list():
     """The shape that made #35 look fixed by a logging-only release.
 
