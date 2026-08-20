@@ -35,8 +35,8 @@ CONTRACT_VERSION = "1.0"
 # conforming payload can only carry one of these or null.
 LEAD_TYPES = frozenset({"A", "B", "MIXED"})
 
-# What a BUILD session proposes for `geography.targeting.max_discovery_rounds`
-# when the model does not author one (product call, Leo 2026-08-20).
+# What a BUILD session proposes for the two run-shaping knobs the model
+# otherwise omits (product call, Leo 2026-08-20).
 #
 # Why it is here and not left to the prompt: every `geographyTargeting` knob is
 # optional and the scanner carries its own fallback for each, so an unauthored
@@ -53,9 +53,37 @@ LEAD_TYPES = frozenset({"A", "B", "MIXED"})
 # The scanner's own fallback is 2.
 INITIAL_MAX_DISCOVERY_ROUNDS = 4
 
-#: The section whose targeting knob the above applies to.
-_ROUNDS_SECTION = "geography"
-_ROUNDS_KEY = "max_discovery_rounds"
+# The run's cumulative prospect ceiling, and the knob that makes the round cap
+# above safe to raise. NOT derived from the round count: `capped_discover`
+# applies the ceiling INSIDE the round loop (`budget.take(found)` returns only
+# the kept subset), and once exhausted it returns `[]`, which
+# `discover_in_area` reads as an exhausted search and breaks the loop. So four
+# rounds cannot cost more verification than two -- at most two extra discovery
+# sweeps, and only while the ceiling still has room.
+#
+# 150 is backend's MEASURED production value, not a guess (skill-update
+# followups tracker, 2026-08-17). Verification is `(N/8) x 80s` at
+# SCANNER_PHASE_CONCURRENCY=8 -- 1009s measured against 1000s predicted for
+# 100 -- so the budget is `499s discovery + 1500s verify(150) + 945s
+# validate(94, the ~63% that pass metro geo) + 500s contacts(50)` = 57 min,
+# 64% of the 5400s job deadline. Unbounded is 82 min / 91%, and the run that
+# motivated the ceiling (0a85e4bd) discovered 262, spent 49 min verifying, and
+# was killed by the deadline having scored nothing.
+#
+# Re-derive rather than carry this forward blind: it moves with
+# SCANNER_PHASE_CONCURRENCY, the geo-reject rate, and the deadline. Backend's
+# runs log `prospect ceiling: <n> for this run`, which is where the live value
+# is observable.
+INITIAL_MAX_PROSPECTS = 150
+
+#: Section -> (path within it, value) seeded when a build session omits the key.
+#: A table rather than two branches because the nesting differs -- the round cap
+#: is under `targeting`, the ceiling is a direct `discovery` key -- and a table
+#: keeps "which sections are touched at all" answerable in one place.
+_SEEDED_DEFAULTS: dict[str, tuple[tuple[str, ...], int]] = {
+    "geography": (("targeting", "max_discovery_rounds"), INITIAL_MAX_DISCOVERY_ROUNDS),
+    "discovery": (("max_prospects",), INITIAL_MAX_PROSPECTS),
+}
 
 
 def build_slug(vertical: str | None) -> str:
@@ -154,50 +182,65 @@ def set_section(
     section, get back the updated local draft plus the RFC 6902 delta to emit.
 
     Self-wrapping is normalised here because this is the ONE owner of a section
-    write, so every path is covered by fixing it once. `INITIAL_MAX_DISCOVERY_ROUNDS`
-    is seeded here for the same reason: a section write REPLACES the section
-    wholesale, so seeding it in `skeleton()` would be discarded by the first
-    geography proposal.
+    write, so every path is covered by fixing it once. `_SEEDED_DEFAULTS` is
+    applied here for the same reason: a section write REPLACES the section
+    wholesale, so seeding those knobs in `skeleton()` would be discarded by the
+    first proposal of their section.
 
     `edit_mode` suppresses the seed. An edit session's config comes from a
     finalized skill that is already running; injecting a knob it deliberately
-    omits would move a live skill from the scanner's 2 rounds to 4 because
-    someone opened its geography section to change a market.
+    omits would move a live skill from the scanner's 2 rounds to 4, or impose a
+    ceiling on a run that has never had one, because someone opened a section to
+    change a market.
     """
     section = _unwrap_self_named(phase, section)
     if not edit_mode:
-        section = _with_default_rounds(phase, section)
+        section = _with_seeded_defaults(phase, section)
     after = apply(config, [{"op": "replace" if phase in config else "add",
                             "path": f"/{phase}", "value": section}])
     return after, diff(config, after)
 
 
-def _with_default_rounds(phase: str, section: dict[str, Any]) -> dict[str, Any]:
-    """Seed `geography.targeting.max_discovery_rounds` when the model omitted it.
+def _with_seeded_defaults(phase: str, section: dict[str, Any]) -> dict[str, Any]:
+    """Seed this section's `_SEEDED_DEFAULTS` knob when the model omitted it.
 
-    Fires on EVERY geography write in a build session, not only the first, and
-    that is the point. Gating it on "the section was empty" would look more
+    Fires on EVERY write of that section in a build session, not only the first,
+    and that is the point. Gating it on "the section was empty" would look more
     conservative and would silently regress: the model re-proposes a section from
     what IT authored, and it never saw the injected value, so an unrelated later
     revision (change a home market, keep everything else) would drop the knob and
-    the run would quietly fall back to 2 rounds. Absent therefore always means
-    `INITIAL_MAX_DISCOVERY_ROUNDS`, and the operator changes it by SAYING a number
+    the run would quietly fall back to the engine's own default. Absent therefore
+    always means the seeded value, and the operator changes it by SAYING a number
     -- which the model then authors, and an authored value is never overwritten.
 
-    Omission was never expressive anyway: per the schema every knob here is
-    optional with a runtime fallback, so leaving it out means 2, not "unbounded".
+    Omission was never expressive anyway: every knob here is optional with a
+    runtime fallback, so leaving `max_discovery_rounds` out means 2 rounds, and
+    leaving `max_prospects` out means the unbounded 91%-of-deadline path.
 
     Returns copies rather than mutating -- the caller's contract is that a section
     body is not modified in place.
     """
-    if phase != _ROUNDS_SECTION:
+    seed = _SEEDED_DEFAULTS.get(phase)
+    if seed is None:
         return section
-    targeting = section.get("targeting")
-    targeting = dict(targeting) if isinstance(targeting, dict) else {}
-    if _ROUNDS_KEY in targeting:
+    path, value = seed
+    *containers, key = path
+    # Copy every level on the way DOWN. An earlier version built the copies on
+    # the way back up, which silently aliased the one-element path
+    # (`discovery.max_prospects`): with no container to rebuild, `node` was the
+    # caller's own dict and the seed was written straight into it. The existing
+    # `set_section` test then passed for the wrong reason -- it compared the new
+    # config against the very dict that had just been mutated.
+    root: dict[str, Any] = dict(section)
+    node = root
+    for name in containers:
+        child = node.get(name)
+        node[name] = dict(child) if isinstance(child, dict) else {}
+        node = node[name]
+    if key in node:
         return section
-    targeting[_ROUNDS_KEY] = INITIAL_MAX_DISCOVERY_ROUNDS
-    return {**section, "targeting": targeting}
+    node[key] = value
+    return root
 
 
 def _unwrap_self_named(phase: str, section: dict[str, Any]) -> dict[str, Any]:

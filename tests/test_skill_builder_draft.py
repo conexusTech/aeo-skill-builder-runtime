@@ -108,10 +108,12 @@ def test_set_section_returns_new_config_and_patch():
     )
     section = {"rules": [{"source": {"context_ref": "lookalike_sources"}}]}
     new_cfg, patch = draft.set_section(cfg, "discovery", section)
-    assert new_cfg["discovery"] == section
+    # `max_prospects` is the build-mode ceiling seed (see `_SEEDED_DEFAULTS`).
+    expected = {**section, "max_prospects": 150}
+    assert new_cfg["discovery"] == expected
     assert cfg["discovery"] == {}  # original untouched
     # The emitted delta, applied to the old config, reproduces the new one.
-    assert draft.apply(cfg, patch)["discovery"] == section
+    assert draft.apply(cfg, patch)["discovery"] == expected
 
 
 def test_section_wrapped_in_its_own_name_is_unwrapped():
@@ -236,6 +238,61 @@ def test_the_round_cap_is_geography_only():
     for phase in ("discovery", "validation", "contacts", "scoring"):
         cfg, _ = draft.set_section({}, phase, {"sources": {}})
         assert "targeting" not in cfg[phase], phase
+
+
+def test_only_geography_and_discovery_are_seeded_at_all():
+    """The seed table is the whole blast radius. `validation`, `contacts` and
+    `scoring` must come back byte-identical to what the model authored."""
+    for phase in ("validation", "contacts", "scoring"):
+        section = {"authored": True}
+        cfg, _ = draft.set_section({}, phase, section)
+        assert cfg[phase] == {"authored": True}, phase
+
+
+# -- the run's prospect ceiling ----------------------------------------------
+
+
+def test_discovery_gets_the_prospect_ceiling_when_the_model_omits_it():
+    """Omitting `max_prospects` is not "no opinion", it is the unbounded path:
+    backend measured it at 82 min / 91% of the 5400s deadline against 57 min /
+    64% with the ceiling, and the run that motivated it (0a85e4bd) died at the
+    deadline having scored nothing."""
+    cfg, patch = draft.set_section({}, "discovery", {"sources": {"a": {}}})
+
+    assert cfg["discovery"]["max_prospects"] == 150
+    assert draft.INITIAL_MAX_PROSPECTS == 150
+    assert draft.apply({}, patch)["discovery"]["max_prospects"] == 150
+
+
+def test_an_authored_prospect_ceiling_is_never_overwritten():
+    cfg, _ = draft.set_section({}, "discovery", {"max_prospects": 40})
+    assert cfg["discovery"]["max_prospects"] == 40
+
+
+def test_edit_mode_does_not_seed_the_prospect_ceiling():
+    cfg, _ = draft.set_section(
+        {}, "discovery", {"sources": {"a": {}}}, edit_mode=True
+    )
+    assert "max_prospects" not in cfg["discovery"]
+
+
+def test_prospect_ceiling_is_reapplied_on_a_later_discovery_revision():
+    first, _ = draft.set_section({}, "discovery", {"sources": {"a": {}}})
+    second, _ = draft.set_section(first, "discovery", {"sources": {"b": {}}})
+    assert second["discovery"]["max_prospects"] == 150
+
+
+def test_a_one_level_seed_does_not_mutate_the_section_it_was_given():
+    """The regression the two-level geography case could not catch.
+
+    `discovery.max_prospects` has no container to rebuild, so a copy-on-the-way-up
+    implementation wrote the seed into the CALLER's dict. Nothing failed: the
+    `set_section` assertion compared the result against the very object that had
+    been mutated, so the test passed BECAUSE of the bug.
+    """
+    section = {"sources": {"a": {}}}
+    draft.set_section({}, "discovery", section)
+    assert section == {"sources": {"a": {}}}
 
 
 def test_the_seeded_geography_section_still_validates():
