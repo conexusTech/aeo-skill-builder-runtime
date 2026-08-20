@@ -76,13 +76,36 @@ INITIAL_MAX_DISCOVERY_ROUNDS = 4
 # is observable.
 INITIAL_MAX_PROSPECTS = 150
 
-#: Section -> (path within it, value) seeded when a build session omits the key.
-#: A table rather than two branches because the nesting differs -- the round cap
-#: is under `targeting`, the ceiling is a direct `discovery` key -- and a table
-#: keeps "which sections are touched at all" answerable in one place.
-_SEEDED_DEFAULTS: dict[str, tuple[tuple[str, ...], int]] = {
-    "geography": (("targeting", "max_discovery_rounds"), INITIAL_MAX_DISCOVERY_ROUNDS),
-    "discovery": (("max_prospects",), INITIAL_MAX_PROSPECTS),
+# How many IN-AREA prospects discovery keeps searching for -- a FLOOR, not a
+# ceiling, and the knob that decides whether the round cap above does anything:
+# `geo_loop` breaks on `len(in_area) >= target_count`.
+#
+# 50 is the value that already runs. `_config_limit` resolves authored -> env
+# `SCANNER_TOP_N` -> a hardcoded 50, and backend set that env to 50 on
+# 2026-08-17, so authoring it changes no behaviour today. What it changes is
+# OWNERSHIP: unauthored, every skill's discovery depth is set by a deployment
+# variable, which is the failure `_config_limit`'s own docstring records --
+# `SCANNER_TOP_N=1` capped a 15-market scan to one round and read as "the model
+# found little" rather than "we stopped looking".
+#
+# Deliberately NOT raised to ~90 (the most a 150 ceiling can yield at the
+# measured ~63% metro-pass rate). That would force all four rounds on every run
+# and always spend the full ceiling; it is a lead-volume product decision that
+# belongs to whoever knows how many leads an operator actually works.
+INITIAL_TARGET_PROSPECTS = 50
+
+#: Section -> the (path within it, value) pairs seeded when a build session omits
+#: the key. A table rather than branches because the nesting differs -- the round
+#: cap is under `targeting`, the two discovery knobs are direct keys -- and a
+#: table keeps "which sections are touched at all" answerable in one place.
+_SEEDED_DEFAULTS: dict[str, tuple[tuple[tuple[str, ...], int], ...]] = {
+    "geography": (
+        (("targeting", "max_discovery_rounds"), INITIAL_MAX_DISCOVERY_ROUNDS),
+    ),
+    "discovery": (
+        (("max_prospects",), INITIAL_MAX_PROSPECTS),
+        (("target_prospects",), INITIAL_TARGET_PROSPECTS),
+    ),
 }
 
 
@@ -220,10 +243,15 @@ def _with_seeded_defaults(phase: str, section: dict[str, Any]) -> dict[str, Any]
     Returns copies rather than mutating -- the caller's contract is that a section
     body is not modified in place.
     """
-    seed = _SEEDED_DEFAULTS.get(phase)
-    if seed is None:
-        return section
-    path, value = seed
+    for path, value in _SEEDED_DEFAULTS.get(phase, ()):
+        section = _seed_key(section, path, value)
+    return section
+
+
+def _seed_key(
+    section: dict[str, Any], path: tuple[str, ...], value: int
+) -> dict[str, Any]:
+    """`section` with `path` set to `value`, or unchanged if the key is present."""
     *containers, key = path
     # Copy every level on the way DOWN. An earlier version built the copies on
     # the way back up, which silently aliased the one-element path

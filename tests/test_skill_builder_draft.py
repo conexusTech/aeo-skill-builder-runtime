@@ -108,8 +108,8 @@ def test_set_section_returns_new_config_and_patch():
     )
     section = {"rules": [{"source": {"context_ref": "lookalike_sources"}}]}
     new_cfg, patch = draft.set_section(cfg, "discovery", section)
-    # `max_prospects` is the build-mode ceiling seed (see `_SEEDED_DEFAULTS`).
-    expected = {**section, "max_prospects": 150}
+    # Both discovery seeds — the ceiling and the floor (see `_SEEDED_DEFAULTS`).
+    expected = {**section, "max_prospects": 150, "target_prospects": 50}
     assert new_cfg["discovery"] == expected
     assert cfg["discovery"] == {}  # original untouched
     # The emitted delta, applied to the old config, reproduces the new one.
@@ -315,3 +315,65 @@ def test_set_section_does_not_mutate_the_section_it_was_given():
     section = {"home_markets": ["us-west"]}
     draft.set_section({}, "geography", section)
     assert section == {"home_markets": ["us-west"]}
+
+
+def test_discovery_gets_the_target_floor_when_the_model_omits_it():
+    """The knob that decides whether the round cap does anything: `geo_loop`
+    breaks on `len(in_area) >= target_count`. Unauthored it falls back to the env
+    `SCANNER_TOP_N`, so the skill's discovery depth would be set by a deployment
+    variable — the failure `_config_limit`'s docstring records."""
+    cfg, patch = draft.set_section({}, "discovery", {"sources": {"a": {}}})
+
+    assert cfg["discovery"]["target_prospects"] == 50
+    assert draft.INITIAL_TARGET_PROSPECTS == 50
+    assert draft.apply({}, patch)["discovery"]["target_prospects"] == 50
+
+
+def test_an_authored_target_floor_is_never_overwritten():
+    cfg, _ = draft.set_section({}, "discovery", {"target_prospects": 120})
+    assert cfg["discovery"]["target_prospects"] == 120
+
+
+def test_edit_mode_does_not_seed_the_target_floor():
+    cfg, _ = draft.set_section(
+        {}, "discovery", {"sources": {"a": {}}}, edit_mode=True
+    )
+    assert "target_prospects" not in cfg["discovery"]
+
+
+def test_both_discovery_seeds_land_together_and_independently():
+    """Two seeds on ONE section: the fold must apply the second to the result of
+    the first, not to the original. Authoring one must not suppress the other —
+    an operator who sets a ceiling still gets the floor, and vice versa."""
+    both, _ = draft.set_section({}, "discovery", {"sources": {"a": {}}})
+    assert both["discovery"]["max_prospects"] == 150
+    assert both["discovery"]["target_prospects"] == 50
+
+    ceiling_only, _ = draft.set_section({}, "discovery", {"max_prospects": 40})
+    assert ceiling_only["discovery"] == {"max_prospects": 40, "target_prospects": 50}
+
+    floor_only, _ = draft.set_section({}, "discovery", {"target_prospects": 120})
+    assert floor_only["discovery"] == {"target_prospects": 120, "max_prospects": 150}
+
+
+def test_the_seeded_discovery_section_still_validates():
+    cfg = draft.skeleton(
+        name="ACME Prospect Scanner",
+        vertical="auto parts",
+        lead_type="B",
+        product_description="brake and suspension parts distribution",
+    )
+    cfg, _ = draft.set_section(
+        cfg,
+        "discovery",
+        {
+            "sources": {
+                "web": {
+                    "name_field": "company_name",
+                    "fields": ["company_name", "city"],
+                    "queries": ["{market} auto parts distributors"],
+                }
+            }
+        },
+    )
+    assert validator.validate_config(cfg, require_complete=False) == []
