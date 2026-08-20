@@ -10,6 +10,7 @@ it — the recurring failure on this feature is a test that covers a helper whil
 nothing asserts the CALL SITE uses it.
 """
 
+from app.skill_builder import draft
 from app.skill_builder.model import FakeChatModel, ModelDecision
 from app.skill_builder.protocol.agui import EventType
 from app.skill_builder.runtime import handle_turn
@@ -262,3 +263,63 @@ def test_building_still_re_derives_the_slug():
     assert [op["value"] for op in _delta_ops(res, "/slug")] == [
         "commercial-roofing-prospect-scanner"
     ]
+
+
+# -- the round-cap seed, at the CALL SITE ------------------------------------
+
+
+def _valid_config():
+    """A config that passes the whole-config gate `_apply_decision` runs.
+
+    `SEEDED` deliberately does not: `discovery.sources` is empty and its
+    `contacts.titles` ref is an unpublished key, and `propose_section` lints the
+    WHOLE config, so a turn built on it never reaches a delta. Using it here would
+    have made both tests below pass vacuously on an interrupt.
+    """
+    cfg = draft.skeleton(
+        name="Franklin Roofing Prospect Scanner",
+        vertical="commercial roofing",
+        lead_type="B",
+        product_description="commercial re-roofing and maintenance",
+    )
+    cfg, _ = draft.set_section(
+        cfg, "geography", {"home_markets": {"context_ref": "home_markets"}},
+        edit_mode=True,
+    )
+    return cfg
+
+
+def _propose_geography(*, mode):
+    """A revision turn that re-proposes geography, in build or edit mode.
+
+    The body authors `targeting.geo_strictness` — a sibling knob — so the turn
+    emits a `/geography/targeting` op either way and the difference between the
+    modes is the CONTENT of that op, not whether one exists.
+    """
+    model = FakeChatModel(ModelDecision(
+        action="propose_section",
+        message="Proposed geography.",
+        phase="geography",
+        section={
+            "home_markets": {"context_ref": "home_markets"},
+            "targeting": {"geo_strictness": "state"},
+        },
+    ))
+    return handle_turn(_continuation(mode=mode, config=_valid_config()), model=model)
+
+
+def test_build_mode_seeds_the_round_cap_through_handle_turn():
+    """`draft.set_section` taking an `edit_mode` flag proves nothing on its own —
+    the recurring failure on this feature is a covered helper whose CALL SITE
+    never passes the argument. This asserts the wire."""
+    ops = _delta_ops(_propose_geography(mode=None), "/geography/targeting")
+    assert ops, "the round cap never reached the wire"
+    assert ops[-1]["value"] == {"geo_strictness": "state", "max_discovery_rounds": 4}
+
+
+def test_edit_mode_does_not_seed_the_round_cap_through_handle_turn():
+    ops = _delta_ops(_propose_geography(mode="edit"), "/geography/targeting")
+    # Not vacuous: the turn DID revise targeting...
+    assert ops, "no targeting delta at all"
+    # ...it just did not invent a knob the finalized skill omits.
+    assert ops[-1]["value"] == {"geo_strictness": "state"}

@@ -35,6 +35,28 @@ CONTRACT_VERSION = "1.0"
 # conforming payload can only carry one of these or null.
 LEAD_TYPES = frozenset({"A", "B", "MIXED"})
 
+# What a BUILD session proposes for `geography.targeting.max_discovery_rounds`
+# when the model does not author one (product call, Leo 2026-08-20).
+#
+# Why it is here and not left to the prompt: every `geographyTargeting` knob is
+# optional and the scanner carries its own fallback for each, so an unauthored
+# knob is invisible -- the operator is never shown a number and never gets the
+# chance to change one. The schema's sibling knobs advertise their runtime
+# defaults in their descriptions ("runtime default 10", "runtime default 12",
+# "`metro` (runtime default)"); this one does not, so the model has nothing to
+# anchor on and omits it. Injecting the value makes it appear in the proposal's
+# STATE_DELTA, which is the only place an operator can review and revise it.
+#
+# It is a CEILING, not a target: `geo_loop.discover_in_area` runs another sweep
+# only while the in-area count is short of `discovery.target_prospects` (a
+# FLOOR), so this raises the permitted depth rather than forcing four sweeps.
+# The scanner's own fallback is 2.
+INITIAL_MAX_DISCOVERY_ROUNDS = 4
+
+#: The section whose targeting knob the above applies to.
+_ROUNDS_SECTION = "geography"
+_ROUNDS_KEY = "max_discovery_rounds"
+
 
 def build_slug(vertical: str | None) -> str:
     """Propose a kebab-case slug from the vertical (PRD §6). Falls back to a
@@ -120,7 +142,11 @@ def apply(config: dict[str, Any], patch: list[dict[str, Any]]) -> dict[str, Any]
 
 
 def set_section(
-    config: dict[str, Any], phase: str, section: dict[str, Any]
+    config: dict[str, Any],
+    phase: str,
+    section: dict[str, Any],
+    *,
+    edit_mode: bool = False,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Set `config[phase]` to `section`, returning (new_config, patch).
 
@@ -128,12 +154,50 @@ def set_section(
     section, get back the updated local draft plus the RFC 6902 delta to emit.
 
     Self-wrapping is normalised here because this is the ONE owner of a section
-    write, so every path is covered by fixing it once.
+    write, so every path is covered by fixing it once. `INITIAL_MAX_DISCOVERY_ROUNDS`
+    is seeded here for the same reason: a section write REPLACES the section
+    wholesale, so seeding it in `skeleton()` would be discarded by the first
+    geography proposal.
+
+    `edit_mode` suppresses the seed. An edit session's config comes from a
+    finalized skill that is already running; injecting a knob it deliberately
+    omits would move a live skill from the scanner's 2 rounds to 4 because
+    someone opened its geography section to change a market.
     """
     section = _unwrap_self_named(phase, section)
+    if not edit_mode:
+        section = _with_default_rounds(phase, section)
     after = apply(config, [{"op": "replace" if phase in config else "add",
                             "path": f"/{phase}", "value": section}])
     return after, diff(config, after)
+
+
+def _with_default_rounds(phase: str, section: dict[str, Any]) -> dict[str, Any]:
+    """Seed `geography.targeting.max_discovery_rounds` when the model omitted it.
+
+    Fires on EVERY geography write in a build session, not only the first, and
+    that is the point. Gating it on "the section was empty" would look more
+    conservative and would silently regress: the model re-proposes a section from
+    what IT authored, and it never saw the injected value, so an unrelated later
+    revision (change a home market, keep everything else) would drop the knob and
+    the run would quietly fall back to 2 rounds. Absent therefore always means
+    `INITIAL_MAX_DISCOVERY_ROUNDS`, and the operator changes it by SAYING a number
+    -- which the model then authors, and an authored value is never overwritten.
+
+    Omission was never expressive anyway: per the schema every knob here is
+    optional with a runtime fallback, so leaving it out means 2, not "unbounded".
+
+    Returns copies rather than mutating -- the caller's contract is that a section
+    body is not modified in place.
+    """
+    if phase != _ROUNDS_SECTION:
+        return section
+    targeting = section.get("targeting")
+    targeting = dict(targeting) if isinstance(targeting, dict) else {}
+    if _ROUNDS_KEY in targeting:
+        return section
+    targeting[_ROUNDS_KEY] = INITIAL_MAX_DISCOVERY_ROUNDS
+    return {**section, "targeting": targeting}
 
 
 def _unwrap_self_named(phase: str, section: dict[str, Any]) -> dict[str, Any]:

@@ -570,7 +570,9 @@ def _apply_decision(
     if decision.action == "propose_section":
         phase = decision.phase or open_phase or ""
         section = decision.section or {}
-        new_config, patch = draft.set_section(state.draft_config, phase, section)
+        new_config, patch = draft.set_section(
+            state.draft_config, phase, section, edit_mode=edit_mode
+        )
         issues = validator.validate_config(new_config, require_complete=False)
         # R12 at the section gate, not only at the tool gate: this is the earliest
         # point the violation exists and the only one where the model is still

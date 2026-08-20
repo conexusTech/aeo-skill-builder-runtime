@@ -284,7 +284,13 @@ def test_emitted_delta_applies_to_the_envelope_we_snapshot():
     delta = res.emitter.wire_events()[types.index(EventType.STATE_DELTA)]["delta"]
 
     applied = jsonpatch.apply_patch(envelope, delta, in_place=False)
-    assert applied["draftConfig"]["geography"] == {"scope": {"context_ref": "home_markets"}}
+    # `targeting` is the build-mode `max_discovery_rounds` seed (draft.py). It is
+    # asserted here rather than excluded because the delta is exactly where it has
+    # to appear — that is how the gateway persists it and the operator sees it.
+    assert applied["draftConfig"]["geography"] == {
+        "scope": {"context_ref": "home_markets"},
+        "targeting": {"max_discovery_rounds": 4},
+    }
     # Acceptance is a SIBLING and must not be disturbed by a config revision.
     assert applied["acceptance"] == envelope["acceptance"]
     # And nothing leaked to the envelope root.

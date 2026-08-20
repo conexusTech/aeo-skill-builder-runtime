@@ -122,7 +122,13 @@ def test_section_wrapped_in_its_own_name_is_unwrapped():
     patch and the delta all pass and nothing reports it. Frontend cannot catch
     it either: they capture event types, not delta payloads.
     """
-    body = {"home_markets": {"context_ref": "home_markets"}, "targeting": {}}
+    # `max_discovery_rounds` is authored explicitly so the build-mode seed
+    # (see `test_geography_gets_the_default_round_cap*`) does not fire here —
+    # this test is about unwrapping and nothing else.
+    body = {
+        "home_markets": {"context_ref": "home_markets"},
+        "targeting": {"max_discovery_rounds": 2},
+    }
     cfg, patch = draft.set_section({}, "geography", {"geography": body})
 
     assert cfg["geography"] == body, "should store the BODY, not the wrapper"
@@ -140,11 +146,115 @@ def test_unwrap_leaves_legitimate_single_key_sections_alone():
     key is NOT the phase name. Without this, an over-eager unwrap would
     silently promote an inner object and lose the real body.
     """
-    partial = {"targeting": {"geo_strictness": "metro"}}
+    # Authored round cap for the same reason as the test above: keep the seed
+    # out of an unwrap assertion.
+    partial = {"targeting": {"geo_strictness": "metro", "max_discovery_rounds": 2}}
     cfg, _ = draft.set_section({}, "geography", partial)
     assert cfg["geography"] == partial
 
-    # Same key as the phase but NOT an object → not the wrapping shape.
+    # Same key as the phase but NOT an object → not the wrapping shape. Asserted
+    # key-wise because the seed adds a sibling `targeting` to this synthetic body;
+    # what matters is that the inner value was NOT promoted.
     scalar = {"geography": "us-west"}
     cfg2, _ = draft.set_section({}, "geography", scalar)
-    assert cfg2["geography"] == scalar
+    assert cfg2["geography"]["geography"] == "us-west"
+
+
+# -- the initial `max_discovery_rounds` proposal (Leo, 2026-08-20) -------------
+
+
+def test_geography_gets_the_default_round_cap_when_the_model_omits_targeting():
+    """The knob has to reach the PROPOSAL, not just the scanner.
+
+    Every `geographyTargeting` knob is optional with a runtime fallback, so an
+    unauthored one is invisible: the operator is shown no number and can revise
+    nothing. Seeding it puts `max_discovery_rounds` in the STATE_DELTA, which is
+    where an operator reviews and changes it.
+    """
+    cfg, patch = draft.set_section({}, "geography", {"home_markets": ["us-west"]})
+
+    assert cfg["geography"]["targeting"]["max_discovery_rounds"] == 4
+    assert draft.INITIAL_MAX_DISCOVERY_ROUNDS == 4
+    # It must be in the emitted patch too — a value that exists only in our local
+    # copy is a value the gateway never persists and the operator never sees.
+    assert draft.apply({}, patch)["geography"]["targeting"]["max_discovery_rounds"] == 4
+
+
+def test_default_round_cap_fills_an_existing_targeting_object():
+    cfg, _ = draft.set_section(
+        {}, "geography", {"targeting": {"geo_strictness": "state"}}
+    )
+    assert cfg["geography"]["targeting"] == {
+        "geo_strictness": "state",
+        "max_discovery_rounds": 4,
+    }
+
+
+def test_an_authored_round_cap_is_never_overwritten():
+    """"Up to the operator if they want to change it" — they change it by saying a
+    number, the model authors it, and the seed must leave it alone."""
+    cfg, _ = draft.set_section(
+        {}, "geography", {"targeting": {"max_discovery_rounds": 2}}
+    )
+    assert cfg["geography"]["targeting"]["max_discovery_rounds"] == 2
+
+
+def test_default_round_cap_is_reapplied_on_a_later_geography_revision():
+    """The anti-silent-regression property, and the reason this is not gated on
+    "the section was empty".
+
+    A section write REPLACES the section, and the model re-proposes from what IT
+    authored — it never saw the injected value. So a later, unrelated revision
+    (change a market, keep everything else) drops the knob, and a run that the
+    operator approved at 4 rounds quietly falls back to the scanner's 2. Absent
+    therefore always means the default.
+    """
+    first, _ = draft.set_section({}, "geography", {"home_markets": ["us-west"]})
+    assert first["geography"]["targeting"]["max_discovery_rounds"] == 4
+
+    # A revision that forgets the knob entirely.
+    second, _ = draft.set_section(first, "geography", {"home_markets": ["us-east"]})
+    assert second["geography"]["targeting"]["max_discovery_rounds"] == 4
+    assert second["geography"]["home_markets"] == ["us-east"]
+
+
+def test_edit_mode_does_not_seed_the_round_cap():
+    """An edit session's config came from a finalized skill that is already
+    running. Injecting a knob it omits would move a live skill from 2 rounds to 4
+    because someone opened its geography section to change a market."""
+    cfg, _ = draft.set_section(
+        {}, "geography", {"home_markets": ["us-west"]}, edit_mode=True
+    )
+    assert "targeting" not in cfg["geography"]
+
+
+def test_the_round_cap_is_geography_only():
+    """`max_discovery_rounds` is `geography.targeting`, despite the name reading
+    like a discovery knob. Seeding it into `discovery` would author a key the
+    engine does not read there — accepted by `additionalProperties: true` and then
+    silently ignored."""
+    for phase in ("discovery", "validation", "contacts", "scoring"):
+        cfg, _ = draft.set_section({}, phase, {"sources": {}})
+        assert "targeting" not in cfg[phase], phase
+
+
+def test_the_seeded_geography_section_still_validates():
+    cfg = draft.skeleton(
+        name="ACME Prospect Scanner",
+        vertical="auto parts",
+        lead_type="B",
+        product_description="brake and suspension parts distribution",
+    )
+    cfg, _ = draft.set_section(
+        cfg, "geography", {"home_markets": {"context_ref": "home_markets"}}
+    )
+    assert validator.validate_config(cfg, require_complete=False) == []
+
+
+def test_set_section_does_not_mutate_the_section_it_was_given():
+    """The seed returns copies. A model-supplied body is also carried in the
+    decision object the caller still holds, so mutating it in place would make the
+    injected value show up in places that never asked for it."""
+    section = {"home_markets": ["us-west"]}
+    draft.set_section({}, "geography", section)
+    assert section == {"home_markets": ["us-west"]}
