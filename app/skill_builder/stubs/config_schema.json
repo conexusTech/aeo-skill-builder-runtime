@@ -188,14 +188,42 @@
             "required": ["key"],
             "properties": {
               "key": { "type": "string", "minLength": 1 },
-              "label": { "type": "string" }
+              "label": { "type": "string" },
+              "minMonths": {
+                "type": "number",
+                "description": "Inclusive lower bound, in whole months from today, of the event date that puts a prospect on this stage. Negative = past. Declare WITH maxMonths or not at all — a rung carrying one bound and not the other is treated as having none."
+              },
+              "maxMonths": {
+                "type": "number",
+                "description": "Exclusive upper bound, in whole months from today. Same convention as the project ladder's TIMELINE_STAGES: months >= minMonths && months < maxMonths."
+              },
+              "requiresContact": {
+                "type": "boolean",
+                "description": "Only for a rung with no month bounds: restrict it to prospects that have a contact route (email/phone/linkedin). Ignored on a bounded rung."
+              },
+              "color": {
+                "type": "string",
+                "description": "Hex badge colour. Optional — a consumer falls back to a palette by declared order, so an operator is never blocked on picking colours."
+              },
+              "description": {
+                "type": "string",
+                "description": "One-line explanation of when a prospect belongs here. Rendered as a column tooltip."
+              }
             },
             "additionalProperties": true
           }
+        },
+        "signalFields": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Discovery field names read as timing signals, in `discovery_data.by_source.*`. Defaults to [trigger_date, transaction_date] when omitted. These are EVENT dates, not completion dates — see $comment_direction."
         }
       },
       "additionalProperties": true,
-      "description": "Pipeline stage definitions (customer skills). Validated against prospect pipeline-status writes (skills.config.pipeline.stages[])."
+      "description": "Pipeline stage definitions (customer skills). Validated against prospect pipeline-status writes (skills.config.pipeline.stages[]). Declare stages in the order an operator should read them: the FIRST rung is the entry point and is where a prospect with no signal rests.",
+      "$comment_why_declared": "The five per-stage keys beyond key/label were declared 2026-08-21, and they were CONSUMED for one commit before they were declared — which is the exact defect this schema's `scoring` $comment describes: a knob the runtime reads that no other repo can see, with no file difference for aeo-agent-service's pinned-copy drift test to detect. `additionalProperties: true` meant nothing errored, so the builder would have kept emitting {key, label} only, every authored rung would have carried no bands, and EVERY prospect would have rested at the entry rung on a scan reporting success. Silent, and indistinguishable from a vertical that genuinely has no timing signal. All five are OPTIONAL, so this is pure relaxation and needs no version bump — same call as `entries_per_query`. NOTE for aeo-agent-service: this will trip the pinned-copy drift test; re-pin, and teach the keys so a builder-authored vocabulary can actually express timing rather than only naming rungs.",
+      "$comment_direction": "THE DIRECTION IS THE TRAP, and it cost a production surface. For a TRIGGER the decision FOLLOWS the date; the scanner's project ladder subtracts a sales cycle as if every date were a project COMPLETION date, which turned 'New location opening, April 30 2026' into 'Decided 4+ months ago' at -16 months when the true offset was -4. Bounds here are read directly off months-from-today. Nothing is subtracted.",
+      "$comment_recency_gap_closed": "This closes the KNOWN GAP recorded in the `scoring` $comment: 'a factor cannot express RECENCY... the bound reads the first number in the value — a date yields its year, and the collected formats varied enough (August 2026, 02/14/2024, 2026-07-30) that any threshold would compare against 2026, 2 and 2026. Do not add a date bound to this shape without a real date parser.' A real parser now exists (`customer-pipeline-stage.util.ts`) handling all three of those spellings plus 'April 27, 2023', and REFUSING a bare year rather than inventing a month from adjacent words. minMonths/maxMonths are therefore a date bound with a parser behind them, which is what that instruction asked for. Note it applies to `pipeline.stages`, not to `scoring.factors` — the recency gap on scoring factors is still open."
     },
     "org_input_schema": {
       "description": "Per-org input field declarations. Two accepted shapes (array OR object-map) — normalized by normalizeOrgInputSchema. Kept permissive here.",

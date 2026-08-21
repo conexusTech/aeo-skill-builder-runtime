@@ -170,6 +170,70 @@ def test_section_shapes_are_derived_not_transcribed():
             assert key in rendered, f"{section}.{key} missing from the prompt"
 
 
+def test_pipeline_is_declared_by_the_schema_and_deliberately_NOT_taught():
+    """🔴 The exclusion is the decision. Do not "fix" this by adding `pipeline`.
+
+    The gateway declared six `pipeline` keys on 2026-08-21 (`3169d10`) and asked us to
+    re-pin and teach them, on the stated premise that our builder "keeps emitting
+    {key, label}". **It emits neither.** `pipeline` appears nowhere in this runtime's
+    Python: not in `draft.skeleton()`, not in `_SHAPED_SECTIONS`, nowhere. We have never
+    authored a stage vocabulary at all.
+
+    And we cannot, yet, because there is no slot to propose one into:
+
+    * `propose_section` carries a section BODY, never a section NAME -- it applies to
+      whichever of the five authoring phases is open (`draft._unwrap_self_named(phase,
+      ...)`), so the model cannot direct a proposal at `pipeline`.
+    * `agui_state_envelope.json` -- the gateway's own pinned contract -- keys
+      `acceptance` by "the five authoring section names (geography, discovery,
+      validation, contacts, scoring)". A sixth accepted section is a THREE-repo change,
+      not something this module may decide.
+
+    So teaching the shape without a slot is not merely useless, it is the #30 failure
+    reproduced exactly: the model, told `pipeline.stages` is authorable, writes the
+    stages into whichever phase happens to be open. That lands as
+    `draftConfig.scoring.stages`, which VALIDATES (sections are
+    `additionalProperties: true`), passes the R12 lint, applies cleanly as a delta, and
+    is then read by nobody. Silent, and indistinguishable from a vertical that has no
+    ladder -- the same shape as the defect the gateway was fixing when it asked.
+
+    This test therefore pins BOTH halves, because either alone rots:
+      1. the schema DOES declare the keys (so the re-pin is real and current), and
+      2. we deliberately do NOT teach them (so the gap stays visible until the
+         cross-repo decision is made).
+
+    Delete it in the same commit that gives `pipeline` a proposal slot, never before.
+    """
+    from app.skill_builder.prompt import _SHAPED_SECTIONS, _section_shapes_layer
+
+    schema = contracts.config_schema()
+
+    # 1. The re-pin carries the gateway's declaration.
+    stage_props = schema["properties"]["pipeline"]["properties"]["stages"]["items"][
+        "properties"
+    ]
+    assert {
+        "key",
+        "label",
+        "minMonths",
+        "maxMonths",
+        "requiresContact",
+        "color",
+        "description",
+    } <= set(stage_props), f"the pin is stale; saw {sorted(stage_props)}"
+    assert "signalFields" in schema["properties"]["pipeline"]["properties"]
+
+    # 2. And we do not teach it.
+    assert "pipeline" not in _SHAPED_SECTIONS
+    rendered = _section_shapes_layer(schema)
+    for key in ("minMonths", "maxMonths", "signalFields"):
+        assert key not in rendered, (
+            f"{key} reached the prompt. If a proposal slot for `pipeline` now exists, "
+            "delete this test in that commit; if not, the model has just been taught "
+            "to author into a section that will be silently dropped."
+        )
+
+
 def test_a_schema_only_shape_appears_without_touching_this_module():
     """Drift-proofing, asserted rather than claimed: inject a new section key into
     a copy of the schema and it must be taught with no code change here."""
