@@ -84,22 +84,28 @@ reading in full before touching AWS here.
 
 ## Status
 
+Verified against AWS on 2026-08-21, not transcribed.
+
 | | |
 |---|---|
-| Code | ✅ complete — 164 tests pass |
+| Code | ✅ 267 tests pass |
 | ECR repository | ✅ `aeo-groundtruth/skill-builder` (see the namespace note in `provision.py`) |
-| Execution role | 🔴 **blocked** — `iam:CreateRole` is denied to us; see `docs/admin-request-skillbuilder-role.md` |
-| Runtime / ARN | ⬜ not created — waiting on the role |
-| Bedrock model access | 🔴 account-level marketplace gate, unestablished |
+| Execution role | ✅ `AmazonBedrockAgentCoreAEOSkillBuilderRole` |
+| Runtime / ARN | ✅ `arn:aws:bedrock-agentcore:us-east-1:082585646836:runtime/aeo_skill_builder-MQ0z2m8tqB` |
+| Deployed | ✅ **v24**, `READY` — `SKILL_BUILDER_BUILD_VERSION=6245f21@83f83571f632` |
+| Bedrock model access | ✅ established — model-backed turns run (`anthropic.claude-sonnet-5`) |
 
-**The role and the model gate are independent.** With the role alone the runtime
-reaches `READY` and serves the deterministic kickoff turn — a real AG-UI stream the
-gateway's R2 and the frontend's R3 can build against instead of a 501. Model-backed
-turns additionally need the marketplace subscription.
+⚠️ **This table was wrong for longer than it was right, and it cost a real detour.** It
+carried "role blocked / runtime not created" through v23 being live, so a reader
+reasoning from it concluded the runtime did not exist and went to AWS to find out.
+**Check `provision.py --check` before trusting this block** — it is read-only, takes a
+second, and is the only statement here that cannot go stale.
 
-`BedrockChatModel` has **never met a real endpoint**: adaptive thinking,
-`output_config.format` and the `cache_control` breakpoint all get their first
-exercise on the first live call. Expect the first real turn to find things.
+Deploys are recorded by `SKILL_BUILDER_BUILD_VERSION` on the runtime itself, in the form
+`<git-tag>@<digest-prefix>`. Both halves earn their place: the tag says which source, the
+digest says which artifact, and they can legitimately disagree (a `-dirty` tag, or a
+rebuild of one commit). That value is the answer to "what is actually running", and it is
+authoritative where this file is not.
 
 ## Related
 
