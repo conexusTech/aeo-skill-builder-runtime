@@ -170,39 +170,54 @@ def test_section_shapes_are_derived_not_transcribed():
             assert key in rendered, f"{section}.{key} missing from the prompt"
 
 
-def test_pipeline_is_declared_by_the_schema_and_deliberately_NOT_taught():
-    """🔴 The exclusion is the decision. Do not "fix" this by adding `pipeline`.
+def test_pipeline_is_declared_by_the_schema_and_deliberately_not_taught():
+    """🔴 PERMANENT by product decision. Do not "fix" this by adding `pipeline`.
 
-    The gateway declared six `pipeline` keys on 2026-08-21 (`3169d10`) and asked us to
-    re-pin and teach them, on the stated premise that our builder "keeps emitting
-    {key, label}". **It emits neither.** `pipeline` appears nowhere in this runtime's
-    Python: not in `draft.skeleton()`, not in `_SHAPED_SECTIONS`, nowhere. We have never
-    authored a stage vocabulary at all.
+    ⚠️ This is not a gap awaiting closure. **The PO ruled (2026-08-21, reaffirmed twice,
+    gateway `4a21468`) that the stage vocabulary is STATIC IN CODE** -- one shared
+    `TIMELINE_STAGES` ladder across both skill types, no config authoring, no builder
+    change. The gateway asked us explicitly: *"Do not add a sixth authoring section. Not
+    now and not later."* So there is nothing for the builder to author, and this test is
+    the standing statement of that contract rather than a temporary pin.
 
-    And we cannot, yet, because there is no slot to propose one into:
+    ### Why it reads as an omission if you do not know the history
+
+    The gateway declared six `pipeline` keys (`3169d10`) and asked us to re-pin and teach
+    them, on the stated premise that our builder "keeps emitting {key, label}". **It
+    emitted neither.** `pipeline` appears nowhere in this runtime's Python -- not in
+    `draft.skeleton()`, not in `_SHAPED_SECTIONS`, nowhere -- so every skill had always
+    run on their code default and no builder-authored ladder had ever existed. That
+    correction is what turned "static in code" from a compromise into the obvious answer.
+
+    ### And there was never a slot to author one into
+
+    Still true, and still the reason teaching the shape would be actively harmful:
 
     * `propose_section` carries a section BODY, never a section NAME -- it applies to
       whichever of the five authoring phases is open (`draft._unwrap_self_named(phase,
       ...)`), so the model cannot direct a proposal at `pipeline`.
     * `agui_state_envelope.json` -- the gateway's own pinned contract -- keys
       `acceptance` by "the five authoring section names (geography, discovery,
-      validation, contacts, scoring)". A sixth accepted section is a THREE-repo change,
-      not something this module may decide.
+      validation, contacts, scoring)".
 
-    So teaching the shape without a slot is not merely useless, it is the #30 failure
-    reproduced exactly: the model, told `pipeline.stages` is authorable, writes the
-    stages into whichever phase happens to be open. That lands as
-    `draftConfig.scoring.stages`, which VALIDATES (sections are
-    `additionalProperties: true`), passes the R12 lint, applies cleanly as a delta, and
-    is then read by nobody. Silent, and indistinguishable from a vertical that has no
-    ladder -- the same shape as the defect the gateway was fixing when it asked.
+    Teaching the shape without a destination is the #30 failure reproduced exactly: the
+    model, told `pipeline.stages` is authorable, writes the stages into whichever phase
+    happens to be open. That lands as `draftConfig.scoring.stages`, which VALIDATES
+    (sections are `additionalProperties: true`), passes the R12 lint, applies cleanly as
+    a delta, and is then read by nobody. Silent, and indistinguishable from a vertical
+    that has no ladder -- the same shape as the defect the gateway was fixing when it
+    asked.
 
-    This test therefore pins BOTH halves, because either alone rots:
-      1. the schema DOES declare the keys (so the re-pin is real and current), and
-      2. we deliberately do NOT teach them (so the gap stays visible until the
-         cross-repo decision is made).
+    ### The pin still matters, which is why both halves are asserted
 
-    Delete it in the same commit that gives `pipeline` a proposal slot, never before.
+    🔑 A skill that DOES declare `config.pipeline.stages[]` still overrides the shared
+    ladder -- the gateway resolves `declared ?? TIMELINE_STAGES` with no branch on skill
+    type. So the six keys are live, not dead, and a stale pin would misdescribe a path
+    that is still read. Either assertion alone rots:
+
+      1. the schema DOES declare the keys -- the re-pin is current; and
+      2. we do NOT teach them -- the decision stays visible instead of looking like
+         something nobody got around to.
     """
     from app.skill_builder.prompt import _SHAPED_SECTIONS, _section_shapes_layer
 
@@ -228,9 +243,10 @@ def test_pipeline_is_declared_by_the_schema_and_deliberately_NOT_taught():
     rendered = _section_shapes_layer(schema)
     for key in ("minMonths", "maxMonths", "signalFields"):
         assert key not in rendered, (
-            f"{key} reached the prompt. If a proposal slot for `pipeline` now exists, "
-            "delete this test in that commit; if not, the model has just been taught "
-            "to author into a section that will be silently dropped."
+            f"{key} reached the prompt. The stage vocabulary is static in code by PO "
+            "decision (gateway 4a21468) and there is no slot to propose a `pipeline` "
+            "into, so the model has just been taught to author into a section that "
+            "will be silently dropped. Revert that change rather than this test."
         )
 
 
