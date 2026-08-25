@@ -120,11 +120,99 @@ def test_a_non_oneOf_failure_gets_no_shape_hint():
     assert "Accepted shapes:" not in issue.message
 
 
-def test_a_oneOf_with_no_description_degrades_silently():
-    """A real case, not hypothetical: `validation.lanes[].fields[]` is a `oneOf`
-    carrying no description. It must not emit a dangling 'Accepted shapes:'."""
-    cfg = {"validation": {"lanes": [{"key": "k", "objective": "o", "fields": [42]}]}}
-    issues = [i for i in validator.validate_config(cfg) if "fields" in i.location]
-    assert issues, "the bad field entry should still be rejected"
-    for i in issues:
-        assert "Accepted shapes:" not in i.message
+def test_a_shape_error_with_no_description_anywhere_degrades_silently():
+    """A dangling "Accepted shapes:" with nothing after it would be worse than no
+    hint at all, so the empty case is asserted directly on the helper.
+
+    Asserted synthetically rather than on a real path, and that is a change from
+    the first version of this test: it used `validation.lanes[].fields[]`, which was
+    a `oneOf` with no description ON THE ONEOF NODE. Resolving the description by
+    walking the PATH now finds the `fields` array's description one level up, so
+    that site legitimately gets a hint and no longer demonstrates the empty case.
+    The guard still has to exist, so it is pinned where it cannot drift.
+    """
+    from jsonschema import Draft202012Validator
+
+    from app.skill_builder.validator import _shape_hint
+
+    schema = {
+        "type": "object",
+        "properties": {"row": {"type": "object", "required": ["a"]}},
+    }
+    errs = [
+        e
+        for e in Draft202012Validator(schema).iter_errors({"row": {}})
+        if e.validator == "required"
+    ]
+    assert errs, "expected a required-property error to test against"
+    assert _shape_hint(schema, errs[0]) == ""
+
+
+def test_a_required_error_states_the_shape_via_the_OWNING_description():
+    """The 2026-08-25 fourth-round bug: the builder authored tier rows as
+    `{min, max, points}` instead of `{threshold, points}`.
+
+    `tiers.description` says in so many words to use `tiers` INSTEAD of min/max,
+    and the model never saw it: the prompt's shapes layer expands one level and
+    stops above `tiers`, and `tiers` has no `oneOf` so the first version of this
+    feature did not reach it either. The description lives on the `tiers` ARRAY
+    while the error points at a ROW, which is why the lookup walks the path rather
+    than reading `err.schema`.
+    """
+    cfg = _factor(tiers=[{"min": 0, "max": 100, "points": 5}])
+    issues = [i for i in validator.validate_config(cfg) if "tiers" in i.location]
+    assert issues, "a {min,max,points} tier row should be rejected"
+
+    # Pinned on the `required` issue SPECIFICALLY, not on the joined messages. The
+    # first version of this asserted against all tiers messages concatenated, and a
+    # mutation dropping `required` from the shape validators still passed -- the
+    # `additionalProperties` error alone satisfied it. Same "assert the property,
+    # not the symptom" trap this file already documents, and the harness caught it.
+    required_issue = next(
+        (i for i in issues if "is a required property" in i.message), None
+    )
+    assert required_issue is not None, "expected a required-property error"
+    assert "Accepted shapes:" in required_issue.message
+    # The correction itself, not merely the identity sentence.
+    assert "instead of min/max" in required_issue.message, (
+        "the min/max disambiguation was truncated -- that is the one sentence this "
+        "extension exists to deliver"
+    )
+
+
+def test_the_budget_keeps_the_tiers_min_max_sentence():
+    """`tiers` fixes the budget at 340 and nothing lower.
+
+    Its sentences end at 79 / 331 / 368 / 516 / 599. The min/max correction is
+    sentence 2, ending at 331, so a 320 budget cuts at 79 and delivers the
+    description WITHOUT the correction -- this feature failing the same way twice.
+    """
+    from app.skill_builder.validator import _SHAPE_DESCRIPTION_BUDGET
+
+    assert _SHAPE_DESCRIPTION_BUDGET >= 331, (
+        "below 331 the tiers description arrives without its min/max sentence, "
+        "which is the only reason this reaches tiers at all"
+    )
+
+
+def test_additional_properties_also_gets_the_shape():
+    """`additionalProperties: false` names the offending key and never the shape.
+    Same gap as `oneOf`, same fix."""
+    cfg = _factor(tiers=[{"threshold": 10, "points": 5, "nonsense": 1}])
+    issues = [
+        i
+        for i in validator.validate_config(cfg)
+        if "tiers" in i.location and "Additional properties" in i.message
+    ]
+    assert issues, "an unknown tier key should be rejected"
+    assert "Accepted shapes:" in issues[0].message
+
+
+def test_a_value_error_still_gets_no_shape_hint():
+    """Type/enum/format errors are already specific about the one value at fault,
+    so a paragraph appended to them is noise. The hint is scoped to SHAPE errors."""
+    cfg = _factor()
+    cfg["scoring"]["factors"][0]["weight"] = "heavy"
+    issue = _issue_at(cfg, "/scoring/factors/0/weight")
+    assert issue is not None
+    assert "Accepted shapes:" not in issue.message

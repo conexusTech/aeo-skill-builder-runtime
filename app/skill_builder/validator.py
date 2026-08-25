@@ -54,66 +54,120 @@ def _location(path: Any) -> str:
     return "/" + "/".join(parts) if parts else "/"
 
 
-#: How much of a failing property's `description` to append to a `oneOf` error.
-#: Measured against the four `oneOf` sites in the schema, not guessed:
+#: How much of the owning property's `description` to append to a SHAPE error.
+#: Measured against every site a shape error can reach, not guessed. The number is
+#: fixed by `tiers`, and the reason is the whole point of this feature:
 #:
-#:   validation.lanes[].fields[]        description absent entirely -> nothing to add
-#:   scoring.factors[].source_field     411 chars, sentences end 61 / 269 / 312
-#:   scoring.factors[].keywords         724 chars, sentences end 79 / 177 / 247 / 465
-#:   scoring.disqualify_rules[]...      71 chars, one sentence
+#:   scoring.factors[].tiers          599 chars, sentences end  79 / 331 / 368 / 516
+#:   scoring.factors[].keywords       724 chars,                79 / 177 / 247 / 465
+#:   scoring.factors[].source_field   411 chars,                61 / 269 / 312
+#:   scoring.priority_bands           408 chars,                20 / 221
+#:   scoring.disqualify_rules         692 chars,                139 / 341 / 424
+#:   validation.lanes[].fields        271 chars,                30 / 204  (all of it)
 #:
-#: 320 is the smallest budget that keeps the SHAPE-DISTINGUISHING sentence at both
-#: sites that have one. For `keywords` the shape is sentence 1 ("keyword to points,
-#: highest-scoring longest match wins") so almost any budget works; for
-#: `source_field` it is sentence 2 ("A list means 'try these in order'"), which is
-#: the string-vs-array distinction the `oneOf` is actually about — and a 240 budget
-#: cuts it at 61, leaving only the identity sentence and none of the shape. That is
-#: the same mistake in miniature as the one this whole feature exists to fix.
+#: `tiers` sentence 2 ends at **331**: *"Use this instead of min/max whenever the
+#: criterion is a curve rather than a cutoff"*. That is the sentence that prevents
+#: the exact bug this extension exists for — the builder authoring tier rows as
+#: `{min, max, points}` — so a 320 budget would deliver the description WITHOUT the
+#: correction, which is this feature failing in the same way twice. 340 is the
+#: smallest number that keeps it. A test pins that boundary.
 #:
-#: Deliberately NOT shared with `prompt._NOTE_BUDGET`, which is a different policy
-#: with a different cost: that one is paid on the cached prefix of every turn, this
-#: one on a single message at failure time. Same mechanic, separate numbers, and
-#: importing prompt rendering into the validator would be the wrong direction.
-_ONEOF_DESCRIPTION_BUDGET = 320
+#: ⚠️ Deliberately cut: `tiers` sentence 5, *"Authoring this switches the factor to
+#: graded mode and `min`/`max` are then ignored"* (ends 599). It reinforces sentence
+#: 2 rather than adding a shape, and reaching it would nearly double every message
+#: and drag in `disqualify_rules` sentences 2-4, which are semantics rather than
+#: shape. If it turns out to be needed, the cheap fix is backend reordering `tiers`
+#: to put it beside sentence 2 — the same "owner reorders, budget does not move"
+#: settlement as `prompt._NOTE_BUDGET`.
+#:
+#: Not shared with `_NOTE_BUDGET`: same mechanic, different policy and cost — that
+#: one is paid on the cached prefix of every turn, this one on one message at
+#: failure time — and validator→prompt would be the wrong dependency direction.
+_SHAPE_DESCRIPTION_BUDGET = 340
+
+#: Errors about the SHAPE of an object, where "what is the accepted shape?" is the
+#: question the message fails to answer. Value errors (`type`, `enum`, `format`,
+#: `pattern`, bounds) are excluded on purpose: they are already specific about the
+#: one value at fault, so appending a paragraph to them is noise.
+#:
+#: `oneOf` came first (2026-08-25) because its message is the least informative
+#: jsonschema emits. `required` and `additionalProperties` were added the same day
+#: after a fourth round of the same failure: the builder authored tier rows as
+#: `{min, max, points}`, and `tiers.description` — which says in so many words to
+#: use `tiers` INSTEAD of min/max — never reached it, because the prompt's shapes
+#: layer expands one level and stops above `tiers`.
+_SHAPE_VALIDATORS = frozenset({"oneOf", "required", "additionalProperties"})
 
 
-def _shape_hint(err: Any) -> str:
-    """The failing property's own `description`, for a `oneOf` error only.
+def _resolve_ref(schema: dict[str, Any], node: Any) -> Any:
+    """Follow a local `$ref` one hop. The schema carries 22 of them via `$defs`."""
+    if not isinstance(node, dict):
+        return node
+    ref = node.get("$ref")
+    if not isinstance(ref, str) or not ref.startswith("#/"):
+        return node
+    target: Any = schema
+    for part in ref[2:].split("/"):
+        if not isinstance(target, dict):
+            return node
+        target = target.get(part)
+    return target if isinstance(target, dict) else node
 
-    jsonschema's `oneOf` message is "… is not valid under any of the given
-    schemas" — the least informative thing it emits, because it discards which
-    branch was closest and why. The answer is usually sitting on the property that
-    failed: `err.schema` for a `oneOf` is the property subschema, so its
-    `description` states the accepted shapes.
 
-    Why this exists: on 2026-08-25 the builder authored
-    `keywords: ['hiring surge', ...]` — a bare list where all three accepted shapes
-    carry points — and could not self-correct from the bare message. The shapes had
-    to be taught up front in the prompt instead, which cost two re-pins and a
-    deploy each because they had to survive a 400-char prompt budget. Delivering
-    them at failure time removes that constraint: the next unstated shape needs no
-    deploy at all.
+def _owning_description(schema: dict[str, Any], path: Any) -> str:
+    """The DEEPEST description at or above `path`.
 
-    Returns "" when there is nothing useful to add, which is a real case:
-    `validation.lanes[].fields[]` is a `oneOf` with no description.
-
-    (`err.context` holds the per-branch sub-errors if a future need wants to say
-    which branch came closest; the description alone is what carries the shapes.)
+    Walking the path rather than reading `err.schema` is what makes this work for
+    `required` / `additionalProperties`: those errors point at the object that is
+    malformed (a tier ROW), and the description that explains the shape lives on
+    its parent (the `tiers` array). `err.schema` would be the row, which has none.
     """
-    if err.validator != "oneOf" or not isinstance(err.schema, dict):
+    node: Any = schema
+    found = ""
+    for segment in path:
+        node = _resolve_ref(schema, node)
+        if not isinstance(node, dict):
+            return found
+        if isinstance(segment, int):
+            node = node.get("items")
+        else:
+            node = (node.get("properties") or {}).get(segment)
+        node = _resolve_ref(schema, node)
+        if isinstance(node, dict):
+            candidate = node.get("description")
+            if isinstance(candidate, str) and candidate.strip():
+                found = candidate
+    return found
+
+
+def _shape_hint(schema: dict[str, Any], err: Any) -> str:
+    """The owning property's `description` for a shape error, else "".
+
+    Why this exists: jsonschema tells the model what is wrong and not what is
+    right. `oneOf` is the worst — "is not valid under any of the given schemas"
+    discards which branch was closest — but `required` and `additionalProperties`
+    have the same gap: they name the offending key and never state the shape.
+
+    On 2026-08-25 that cost four rounds of prompt-text edits, each a re-pin and a
+    deploy, because every accepted shape had to survive a 400-char prompt budget
+    up front. Delivering the description at failure time removes that constraint:
+    there is no budget at the point of failure, and the schema already says it.
+
+    Returns "" when no ancestor carries a description, which is a real case and
+    must not produce a dangling "Accepted shapes:".
+    """
+    if err.validator not in _SHAPE_VALIDATORS:
         return ""
-    raw = err.schema.get("description")
-    if not isinstance(raw, str):
-        return ""
+    raw = _owning_description(schema, err.absolute_path)
     text = " ".join(raw.split())
     if not text:
         return ""
-    if len(text) > _ONEOF_DESCRIPTION_BUDGET:
-        cut = text.rfind(". ", 0, _ONEOF_DESCRIPTION_BUDGET)
+    if len(text) > _SHAPE_DESCRIPTION_BUDGET:
+        cut = text.rfind(". ", 0, _SHAPE_DESCRIPTION_BUDGET)
         text = (
             text[: cut + 1]
             if cut > 0
-            else text[:_ONEOF_DESCRIPTION_BUDGET].rstrip() + "…"
+            else text[:_SHAPE_DESCRIPTION_BUDGET].rstrip() + "…"
         )
     return text
 
@@ -132,7 +186,7 @@ def issues_for_schema(
     issues = []
     for err in validator.iter_errors(instance):
         message = err.message
-        hint = _shape_hint(err)
+        hint = _shape_hint(schema, err)
         if hint:
             message = f"{message} Accepted shapes: {hint}"
         issues.append(
