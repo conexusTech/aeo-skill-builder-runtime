@@ -6,7 +6,10 @@
   "$comment_partial_drafts": "OMIT WHAT YOU DON'T KNOW YET — NEVER PLACEHOLDER IT. Structural/incremental mode drops top-level `required` so a half-built draft persists fine, but `const`, `enum` and type constraints are PROPERTY constraints and still apply from the first STATE_SNAPSHOT. That is deliberate, not an oversight: relaxing them would leave structural mode validating essentially nothing, and a placeholder that passes validation is worse than an absent field, because it reaches finalize looking legitimate. So a mid-conversation draft should carry `version: \"1.0\"` (known immediately), omit `type` until the skill type is actually decided, and omit any section not yet proposed — rather than emitting `type: \"prospect-scanner\"` or a draft version string. Flagged by aeo-agent-service 2026-08-03, whose skeleton did exactly that and would therefore have been rejected on turn one at the STATE_DELTA persist point rather than at the finalize gate where it would have been noticed in testing.",
   "$comment": "SECTION vs PHASE — the one naming rule in this contract. A **section** is an AUTHORING unit: one of the five fixed conversation steps (geography, discovery, validation, contacts, scoring) that the builder chat proposes and the user accepts individually, and that STATE_DELTA JSON pointers address. A **phase** is a RUNTIME EXECUTION unit: an ordered scanner step id in `execution_phases`, whose subsets drive reduced test runs (R6). They are different cardinalities, different lifecycles and different owners, and all three repos had independently used the word 'phase' for both — aeo-frontend and aeo-agent-service for the five authoring sections, this schema for the execution ids. Ruled 2026-08-03: the field formerly named `phases` is now `execution_phases`; the five authoring sections keep their existing top-level key names so neither sibling has to change emitted paths or STATE_DELTA pointers. Do not reintroduce a top-level `phases`.",
   "type": "object",
-  "required": ["version", "run_parameters"],
+  "required": [
+    "version",
+    "run_parameters"
+  ],
   "$comment_type_not_required": "`type` was REMOVED from `required` on 2026-08-07, and this is the second time this exact defect has shipped. The agent is the only config emitter and it never writes `type`: `draft.skeleton()` takes `type_` but its one caller never passes it, and `config[\"type\"]` is assigned nowhere else in the runtime — deliberately, because the field is enum-constrained and their ratified authoring rule is 'omit what isn't known yet, never placeholder it'. With `type` required, STRICT mode rejected every draft, which is BOTH gates (test-run start and finalize), forever. Identical to the `execution_phases` defect corrected in thread #07.1 for the identical reason, on a neighbouring field. It survived because R2 did not exist, so no real config had ever reached a strict gate. Nothing needs the value: finalize already falls back to `SkillType.Customer` when it is absent, and R13's `skill_type` dimension is read from the `skills.type` COLUMN, not from here. Found by running the real container, not by a test — the pattern holds.",
   "properties": {
     "version": {
@@ -26,11 +29,17 @@
       "description": "Catalog slug. Convention: <vertical>-prospect-scanner (Q2). Distinct from runtime_slug (dispatch pointer)."
     },
     "type": {
-      "enum": ["customer", "project"],
+      "enum": [
+        "customer",
+        "project"
+      ],
       "description": "Skill type — mirrors skills.type. This IS R13's `skill_type` match dimension; it is not a separate field. Do not emit a `skill_type` key."
     },
     "product_description": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "snake_case, like every key in this contract. `productDescription` is NOT accepted — see the root $comment on casing."
     },
     "vertical": {
@@ -38,7 +47,11 @@
       "description": "R13 match dimension 1 of 3. Vertical/industry tag powering library-first catalog match. Curated taxonomy still pending an owner (Q8), so no enum yet — a free string today."
     },
     "lead_type": {
-      "enum": ["A", "B", "MIXED"],
+      "enum": [
+        "A",
+        "B",
+        "MIXED"
+      ],
       "description": "R13 match dimension 2 of 3. Mirrors the `organization_lead_type_enum` / `organizations.lead_type` vocabulary exactly — uppercase, `MIXED` not `mixed`. Declared 2026-08-03: aeo-agent-service was already emitting this and it was being accepted-but-unvalidated, which is precisely the trust problem R13 cannot have, since its whole premise is that catalog metadata is reliable."
     },
     "run_parameters": {
@@ -47,33 +60,64 @@
     },
     "execution_phases": {
       "type": "array",
-      "items": { "type": "string", "enum": ["zip_discovery", "discovery", "validation", "contacts", "scoring"] },
+      "items": {
+        "type": "string",
+        "enum": [
+          "zip_discovery",
+          "discovery",
+          "validation",
+          "contacts",
+          "scoring"
+        ]
+      },
       "minItems": 1,
       "description": "RUNTIME concept, and OPTIONAL — omit it and the scanner runs its full built-in phase order. Only supply it to run a reduced subset, which is what drives test runs (R6). Ordered execution phase ids; the scanner runtime honours exactly the five enumerated in `items.enum`, in that order. Renamed from `phases` on 2026-08-03 to end the collision with the five authoring sections — see the root $comment. Not authored in the chat and not shown per-section in the draft panel; `RuntimeContextService` strips it before the builder agent sees the config, because the agent authors sections, not runtime phases.",
       "$comment": "NOT in `required`, deliberately — corrected 2026-08-03 after aeo-agent-service confirmed they never populate it. It was required in the first cut, which would have made strict-mode finalize reject every draft the agent produces, since the only party emitting configs does not write this field. Omission is also already the normal case for scans elsewhere in the gateway: scan-runs.service.ts only sets `phases` on the job when the Strategy Tester passes an explicit subset, otherwise 'the scan task runs its built-in phases'. If a future scanner genuinely needs an explicit list, the gateway supplies it at dispatch — not the authoring agent. 🔨 CORRECTION 2026-08-05: this description previously gave the example ids as phase-0/phase-1a/phase-2/phase-3. Those were never real — the legacy AV engine does not read the phase subset at all, and configurable-prospect-scanner ignores names it does not recognise (force-including discovery), so a subset spelled that way silently ran discovery only. The five real names are now enumerated in `items.enum`, transcribed from ALL_PHASES in configurable-prospect-scanner/aeo/runner.py. Nothing can import that Python list, so when the scanner adds or renames a phase, the same PR must touch this enum and src/backend/skills/config/scanner-phases.ts — a gateway-side drift guard locks those two to each other."
     },
     "geography": {
-      "allOf": [{ "$ref": "#/$defs/section" }],
+      "allOf": [
+        {
+          "$ref": "#/$defs/section"
+        }
+      ],
       "description": "AUTHORING section 1 of 5. Geographic scope / home-market targeting. Org-specific values MUST be context refs (see $defs/contextRef, R12). Maps to runtime phase: zip discovery.",
       "properties": {
-        "home_markets": { "$ref": "#/$defs/boundStringList" },
-        "secondary_markets": { "$ref": "#/$defs/boundStringList" },
-        "excluded_markets": { "$ref": "#/$defs/boundStringList" },
-        "targeting": { "$ref": "#/$defs/geographyTargeting" }
+        "home_markets": {
+          "$ref": "#/$defs/boundStringList"
+        },
+        "secondary_markets": {
+          "$ref": "#/$defs/boundStringList"
+        },
+        "excluded_markets": {
+          "$ref": "#/$defs/boundStringList"
+        },
+        "targeting": {
+          "$ref": "#/$defs/geographyTargeting"
+        }
       }
     },
     "discovery": {
-      "allOf": [{ "$ref": "#/$defs/section" }],
+      "allOf": [
+        {
+          "$ref": "#/$defs/section"
+        }
+      ],
       "description": "AUTHORING section 2 of 5. Discovery rules — sources, queries, ICP seeds. Maps to runtime phase: discovery sweep.",
       "properties": {
         "sources": {
           "type": "object",
           "minProperties": 1,
-          "additionalProperties": { "$ref": "#/$defs/discoverySource" },
+          "additionalProperties": {
+            "$ref": "#/$defs/discoverySource"
+          },
           "description": "Named discovery buckets. Keys are free-form bucket names; each value carries the engine's own source shape verbatim. This is the ONE part of `discovery` the scanner reads — `icp_attributes` below is currently unconsumed."
         },
-        "lookalike_sources": { "$ref": "#/$defs/boundStringList" },
-        "icp_attributes": { "$ref": "#/$defs/boundStringList" },
+        "lookalike_sources": {
+          "$ref": "#/$defs/boundStringList"
+        },
+        "icp_attributes": {
+          "$ref": "#/$defs/boundStringList"
+        },
         "entries_per_query": {
           "type": "integer",
           "minimum": 1,
@@ -101,24 +145,40 @@
       }
     },
     "validation": {
-      "allOf": [{ "$ref": "#/$defs/section" }],
+      "allOf": [
+        {
+          "$ref": "#/$defs/section"
+        }
+      ],
       "description": "AUTHORING section 3 of 5. Signal validation rules — disqualifiers, required signals. Maps to runtime phase: signal validation.",
       "properties": {
-        "in_market_signals": { "$ref": "#/$defs/boundStringList" },
-        "disqualifiers": { "$ref": "#/$defs/boundStringList" },
+        "in_market_signals": {
+          "$ref": "#/$defs/boundStringList"
+        },
+        "disqualifiers": {
+          "$ref": "#/$defs/boundStringList"
+        },
         "lanes": {
           "type": "array",
           "description": "Extra enrichment passes, beyond the qualify-or-disqualify verdict above. Each lane asks ONE question of every prospect that survived qualification and returns rows in a shape you declare. Use a lane when the skill needs to LEARN something about a prospect it has already accepted rather than decide whether to accept it — dated timing events (several per prospect, each with a type and a date), or the current supplier classified into one of a few states with its evidence. A scoring factor then binds to the lane by its `key`, exactly as it binds to a collected field. Lane rows are stored under that key, so the key must not be one of `validated`, `signals_found`, `disqualifiers_hit`, `reasoning`.",
           "items": {
             "type": "object",
-            "required": ["key", "objective", "fields"],
+            "required": [
+              "key",
+              "objective",
+              "fields"
+            ],
             "properties": {
               "key": {
                 "type": "string",
                 "minLength": 1,
                 "description": "Identifier for this lane and the name its rows are stored under. A scoring factor reads the lane by naming this in `source_field`."
               },
-              "name": { "type": "string", "minLength": 1, "description": "Human-readable label." },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Human-readable label."
+              },
               "objective": {
                 "type": "string",
                 "minLength": 1,
@@ -130,13 +190,23 @@
                 "description": "The lane's output vocabulary. Anything the lane returns outside this list is dropped, and any field in it that the evidence does not support comes back empty — so declare what you will actually score on. If a factor is going to gate on recency, declare a date field here.",
                 "items": {
                   "oneOf": [
-                    { "type": "string", "minLength": 1 },
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
                     {
                       "type": "object",
-                      "required": ["key"],
+                      "required": [
+                        "key"
+                      ],
                       "properties": {
-                        "key": { "type": "string", "minLength": 1 },
-                        "description": { "type": "string" }
+                        "key": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "description": {
+                          "type": "string"
+                        }
                       },
                       "additionalProperties": false
                     }
@@ -145,7 +215,10 @@
               },
               "data_sources": {
                 "type": "array",
-                "items": { "type": "string", "minLength": 1 },
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "description": "Optional. Where to look — registries, portals, published documents. Omit it and the lane searches broadly."
               },
               "max_items": {
@@ -161,24 +234,39 @@
       "$comment": "Shape ratified 2026-08-04 (thread #17) against what `aeo/phases/validation.py` actually reads, not by design-by-committee. `in_market_signals` and `disqualifiers` are R12-bound positions. `lanes` added 2026-08-24: the verdict above is ONE lane with a fixed four-field shape, which is right for a verdict and wrong for anything else a skill needs to learn about an accepted prospect. Read by `aeo/phases/enrichment.py`; rows are stored under each lane's `key` inside `validation_data` (open JSONB, already written by this phase — no migration), which is also how a scoring factor binds to a lane. Lanes run only on prospects that survived qualification, because enriching a known-disqualified prospect is spend on a conclusion nobody reads. A misauthored lane is SKIPPED WITH A LOGGED REASON rather than silently, since a dropped lane is otherwise indistinguishable from a lane that ran and found nothing."
     },
     "contacts": {
-      "allOf": [{ "$ref": "#/$defs/section" }],
+      "allOf": [
+        {
+          "$ref": "#/$defs/section"
+        }
+      ],
       "description": "AUTHORING section 4 of 5. Decision-maker search — target titles, contact enrichment. Maps to runtime phase: decision-maker search.",
       "properties": {
-        "titles": { "$ref": "#/$defs/boundStringList" },
-        "seniorities": { "$ref": "#/$defs/boundStringList" }
+        "titles": {
+          "$ref": "#/$defs/boundStringList"
+        },
+        "seniorities": {
+          "$ref": "#/$defs/boundStringList"
+        }
       },
       "$comment": "Shape ratified 2026-08-04 (thread #17) against what `aeo/phases/contacts.py` actually reads. Both fields are R12-bound positions; note the context-field keys are `decision_titles` / `decision_seniorities`, which do NOT match the config key names — see context-field-keys.json's config_positions."
     },
     "scoring": {
-      "allOf": [{ "$ref": "#/$defs/section" }],
+      "allOf": [
+        {
+          "$ref": "#/$defs/section"
+        }
+      ],
       "description": "AUTHORING section 5 of 5. Scoring model — weights, emphasis. Org-specific emphasis MUST be context refs (R12). Maps to runtime phase: scoring.",
       "properties": {
         "factors": {
           "type": "array",
-          "description": "The ICP-fit axis, and the largest single contributor to a score. Each factor reads ONE thing this config collects and says how much it is worth. Name the field in `source_field` (a discovery field, or an enrichment lane's key) and use `name` as the human label — a factor that reads a field nothing collects scores zero for every prospect, forever, with no error anywhere. `weight` is the factor's share of the axis; only the ratios between weights matter. HOW IT IS GRADED depends on which table you author, and authoring one is almost always better than leaving it out: `tiers` for a numeric curve (a size band that peaks in the middle), `keywords` for a category or status or job title, `base_points` for dated events that go stale. Author none of those and the factor scores PRESENCE — any value at all earns full credit, so a small value ranks the same as a large one, which is rarely what a criterion with degrees means. ⚠️ `min`/`max` are a cutoff, not a curve, and they apply to presence mode only: `max` makes a LARGER value score zero, so \"5 or more is best\" written as `max: 5` scores the best prospects zero.",
+          "description": "🔴 VALIDATION RULE, NOT ADVICE: a factor that grades nothing is REJECTED when its name OR its bound `source_field` reads as a quantity — footage, size, count, age, year, revenue, employees, units, volume, spend, budget, value, amount, capacity, floors, beds, rooms. Author `tiers` for a curve, `keywords` for a category, or `min` for a cutoff.",
           "items": {
             "type": "object",
-            "required": ["name", "weight"],
+            "required": [
+              "name",
+              "weight"
+            ],
             "properties": {
               "name": {
                 "type": "string",
@@ -193,8 +281,18 @@
               "source_field": {
                 "description": "The collected field(s) this factor reads, overriding `name`. A list means \"try these in order\", which is how one factor reads two discovery sources that named the same quantity differently — one sweep returns `estimated_headcount`, another returns `employee_estimate`. The first candidate carrying a value wins. Matching ignores case and punctuation but is never fuzzy: name a field the sources actually return.",
                 "oneOf": [
-                  { "type": "string", "minLength": 1 },
-                  { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
                 ]
               },
               "weight": {
@@ -208,10 +306,20 @@
                 "description": "Graded scoring by a NUMERIC value: the highest threshold the value meets wins. Use this instead of min/max whenever the criterion is a curve rather than a cutoff — a size band that peaks in the middle (a mid-sized organization is the best fit and a very large one is worse) is expressible here and is not expressible with min/max. The table may go up and down freely. Points are relative: the largest points value in the table is full credit for this factor, and the factor's `weight` decides its share of the axis. Authoring this switches the factor to graded mode and `min`/`max` are then ignored.",
                 "items": {
                   "type": "object",
-                  "required": ["threshold", "points"],
+                  "required": [
+                    "threshold",
+                    "points"
+                  ],
                   "properties": {
-                    "threshold": { "type": "number", "description": "Value at or above which this row applies." },
-                    "points": { "type": "number", "minimum": 0, "description": "Credit awarded at this threshold, relative to the table's own maximum." }
+                    "threshold": {
+                      "type": "number",
+                      "description": "Value at or above which this row applies."
+                    },
+                    "points": {
+                      "type": "number",
+                      "minimum": 0,
+                      "description": "Credit awarded at this threshold, relative to the table's own maximum."
+                    }
                   },
                   "additionalProperties": false
                 }
@@ -219,20 +327,56 @@
               "keywords": {
                 "description": "Graded scoring by TEXT: keyword to points, highest-scoring longest match wins. Use it when a field carries a category rather than a number — an industry, a status, a job title. Points are relative to the table's own maximum, exactly like `tiers`. Matching is case-insensitive substring, and the LONGEST matching keyword wins, so a keyword that contains another (`standalone-recent` contains `standalone`) scores correctly regardless of the order you write them in. Authoring this switches the factor to graded mode and `min`/`max` are then ignored. Three shapes are accepted: an object of keyword to points; a list of {keyword, points}; or a list of {name, points, keywords[]} buckets when several spellings share one score.",
                 "oneOf": [
-                  { "type": "object", "additionalProperties": { "type": "number" }, "minProperties": 1 },
+                  {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "number"
+                    },
+                    "minProperties": 1
+                  },
                   {
                     "type": "array",
                     "minItems": 1,
                     "items": {
                       "type": "object",
                       "properties": {
-                        "keyword": { "type": "string", "minLength": 1 },
-                        "keywords": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
-                        "name": { "type": "string", "minLength": 1 },
-                        "points": { "type": "number", "minimum": 0 },
-                        "fit_score": { "type": "number", "minimum": 0 }
+                        "keyword": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "keywords": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "points": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "fit_score": {
+                          "type": "number",
+                          "minimum": 0
+                        }
                       },
-                      "anyOf": [{ "required": ["keyword"] }, { "required": ["keywords"] }],
+                      "anyOf": [
+                        {
+                          "required": [
+                            "keyword"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "keywords"
+                          ]
+                        }
+                      ],
                       "additionalProperties": true
                     }
                   }
@@ -250,7 +394,10 @@
               },
               "bonus_keywords": {
                 "type": "array",
-                "items": { "type": "string", "minLength": 1 },
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "description": "Words that mark a row as the high-urgency kind, matched anywhere in the row. Event mode only."
               },
               "date_field": {
@@ -277,7 +424,9 @@
               }
             },
             "additionalProperties": true
-          }
+          },
+          "$comment_ordering": "SENTENCE ORDER IS LOAD-BEARING HERE. aeo-skill-builder-runtime renders this description into the model prompt through `_section_shapes_layer`, which truncates at the last sentence boundary at or below _NOTE_BUDGET (400 chars). The actionable rule must therefore come FIRST. Measured 2026-08-25: an earlier 1,684-char version put the rule at offset 1133 and 78% was dropped, so the model was never taught it in ANY framing -- not even as the advice it had been before. Do not ask for the budget to be raised (settled 2026-08-12: the cheap fix belongs to the field owner, and every increase is paid by every other field tail). Verify with the render, not by reading: the bound-field clause lives INSIDE sentence 1 precisely so truncation cannot take it separately. 🔑 `description` is now EXACTLY what renders (aeo-agent-service measured 342 of 342): keep it that way. A description longer than the budget has an invisible tail that reads as taught content and is not -- 194 chars of this field were in that state, which is the same bug class one level up. Anything a human needs but the model does not belongs in a `$comment_*`.",
+          "$comment_axis_prose": "A label alone will not tell you: `growth_trajectory` bound to `employee_growth_count` is caught. Each factor reads ONE collected thing; `weight` is its share of the axis and only ratios matter. The ICP-fit axis, and the largest single contributor to a score. Each factor reads ONE thing this config collects and says how much it is worth. Name the field in `source_field` (a discovery field, or an enrichment lane's key) and use `name` as the human label — a factor that reads a field nothing collects scores zero for every prospect, forever, with no error anywhere. `weight` is the factor's share of the axis; only the ratios between weights matter. HOW IT IS GRADED depends on which table you author, and authoring one is almost always better than leaving it out: `tiers` for a numeric curve (a size band that peaks in the middle), `keywords` for a category or status or job title, `base_points` for dated events that go stale. Author none of those and the factor scores PRESENCE — any value at all earns full credit, so a small value ranks the same as a large one, which is rarely what a criterion with degrees means. ⚠️ `min`/`max` are a cutoff, not a curve, and they apply to presence mode only: `max` makes a LARGER value score zero, so \"5 or more is best\" written as `max: 5` scores the best prospects zero."
         },
         "disqualify_below": {
           "type": "number",
@@ -288,9 +437,16 @@
           "description": "Rules that make a prospect INELIGIBLE, whatever it scores — too small, wrong country, a multi-year contract just signed with someone else. Different from `disqualify_below`, which is a score cutoff and therefore a statement about rank: a disqualified prospect may still score well on every other criterion, so no threshold can express this. Evaluated BEFORE any scoring, and a match zeroes the score and records the reason. ⚠️ A rule never fires on a field the prospect does not carry — absence of evidence is not grounds for exclusion, or every prospect whose country the sources failed to return would vanish. If a rule must fire on absence, the fix is to make discovery collect that field.",
           "items": {
             "type": "object",
-            "required": ["source_field", "reason"],
+            "required": [
+              "source_field",
+              "reason"
+            ],
             "properties": {
-              "key": { "type": "string", "minLength": 1, "description": "Short identifier for the rule." },
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Short identifier for the rule."
+              },
               "reason": {
                 "type": "string",
                 "minLength": 1,
@@ -299,20 +455,42 @@
               "source_field": {
                 "description": "The collected field this rule reads. A list means \"try these in order\".",
                 "oneOf": [
-                  { "type": "string", "minLength": 1 },
-                  { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
                 ]
               },
-              "below": { "type": "number", "description": "Fires when the first number in the field is LESS than this." },
-              "above": { "type": "number", "description": "Fires when the first number in the field is GREATER than this." },
+              "below": {
+                "type": "number",
+                "description": "Fires when the first number in the field is LESS than this."
+              },
+              "above": {
+                "type": "number",
+                "description": "Fires when the first number in the field is GREATER than this."
+              },
               "keywords": {
                 "type": "array",
-                "items": { "type": "string", "minLength": 1 },
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "description": "Fires when ANY of these appears in the field."
               },
               "required_keywords": {
                 "type": "array",
-                "items": { "type": "string", "minLength": 1 },
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "description": "Fires when NONE of these appears in the field — the \"must be one of\" form, e.g. a served-country list."
               }
             },
@@ -324,19 +502,36 @@
           "description": "What a score MEANS. A number ranks prospects; a band tells an operator what to do about one — and without bands every consumer invents its own thresholds, so the same score reads as two different verdicts on two screens. Give contiguous ranges covering 0 to `score_cap` with no gaps: a score that falls in a gap has no verdict at all, which is invisible until the one prospect that lands there renders blank.",
           "items": {
             "type": "object",
-            "required": ["label"],
+            "required": [
+              "label"
+            ],
             "properties": {
-              "label": { "type": "string", "minLength": 1, "description": "The verdict, e.g. \"Critical\", \"High\", \"Skip\"." },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The verdict, e.g. \"Critical\", \"High\", \"Skip\"."
+              },
               "range": {
                 "type": "array",
                 "minItems": 2,
                 "maxItems": 2,
-                "items": { "type": "number" },
+                "items": {
+                  "type": "number"
+                },
                 "description": "[lowest, highest] score in this band, both inclusive."
               },
-              "min": { "type": "number", "description": "Alternative to `range`: lowest score, inclusive." },
-              "max": { "type": "number", "description": "Alternative to `range`: highest score, inclusive." },
-              "action": { "type": "string", "description": "What to do — \"Call today\", \"Research\". Shown to the operator." }
+              "min": {
+                "type": "number",
+                "description": "Alternative to `range`: lowest score, inclusive."
+              },
+              "max": {
+                "type": "number",
+                "description": "Alternative to `range`: highest score, inclusive."
+              },
+              "action": {
+                "type": "string",
+                "description": "What to do — \"Call today\", \"Research\". Shown to the operator."
+              }
             },
             "additionalProperties": true
           }
@@ -354,13 +549,30 @@
         "ai_adjustment": {
           "type": "object",
           "description": "Bounds on the discretionary per-prospect adjustment, clamped to this range.",
-          "properties": { "min": { "type": "number" }, "max": { "type": "number" } }
+          "properties": {
+            "min": {
+              "type": "number"
+            },
+            "max": {
+              "type": "number"
+            }
+          }
         },
-        "completeness": { "$ref": "#/$defs/scoringAxis" },
-        "fit": { "$ref": "#/$defs/scoringAxis" },
-        "region_bonus": { "$ref": "#/$defs/scoringAxis" },
-        "multi_source": { "$ref": "#/$defs/scoringAxis" },
-        "pipeline": { "$ref": "#/$defs/scoringAxis" }
+        "completeness": {
+          "$ref": "#/$defs/scoringAxis"
+        },
+        "fit": {
+          "$ref": "#/$defs/scoringAxis"
+        },
+        "region_bonus": {
+          "$ref": "#/$defs/scoringAxis"
+        },
+        "multi_source": {
+          "$ref": "#/$defs/scoringAxis"
+        },
+        "pipeline": {
+          "$ref": "#/$defs/scoringAxis"
+        }
       },
       "$comment": "Declared 2026-08-12 (thread #32), and every property was read off the engine's actual read sites rather than transcribed from the thread: `factors` + min/max at av_lead_scanner.py score_config_factors/_factor_credit, `score_cap`/`ai_adjustment` at :1290-1291, `disqualify_below` at :1365, the five axis `max` values at _DEFAULT_SCORING. WHY THIS EXISTS: `scoring` previously declared nothing, so each knob the engine consumed was invisible to every other repo — aeo-agent-service's drift test compares published files and there was no file difference to detect, which is how the engine's vocabulary went stale in their layer inside four hours. TWO DEVIATIONS FROM THE PROPOSED FRAGMENT, both deliberate: (1) `disqualify_below` was NOT in the proposal and the engine does read it — the same undercount class the thread exists to close, found by checking instead of trusting. (2) `required: [name, weight]` and `exclusiveMinimum: 0` are a TIGHTENING, not the 'pure relaxation' the proposal claimed: the engine defaults a missing weight to 1 and silently SKIPS weight<=0, so both cases are legal today and become errors here. Kept because an implicit weight of 1 beside an explicit 25 is near-certainly not what the operator meant, and a skipped factor is invisible — but it is a behaviour change, argued rather than smuggled. Safe as a non-bump because `factors` is new: no shipped config declares it. The vertical-shaped internals (fit.keyword_scores, pipeline.statuses/phase_fallback, region_bonus.regions/state_aliases, multi_source.tiers, completeness.fields) are deliberately NOT declared — the PO ruled they must go, and completeness.fields is now derived from the config's own sources when unset, so declaring it would invite a model to author what the runtime computes better. KNOWN GAP, evidenced not theorised: a factor cannot express RECENCY. On run b29b3416 a 2023 permit earned the same full credit as one from last month, and min/max cannot fix it because the bound reads the first number in the value — a date yields its year, and the collected formats varied enough ('August 2026', '02/14/2024', '2026-07-30') that any threshold would compare against 2026, 2 and 2026. Do not add a date bound to this shape without a real date parser."
     },
@@ -372,10 +584,17 @@
           "minItems": 1,
           "items": {
             "type": "object",
-            "required": ["key"],
+            "required": [
+              "key"
+            ],
             "properties": {
-              "key": { "type": "string", "minLength": 1 },
-              "label": { "type": "string" },
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "label": {
+                "type": "string"
+              },
               "minMonths": {
                 "type": "number",
                 "description": "Inclusive lower bound, in whole months from today, of the event date that puts a prospect on this stage. Negative = past. Declare WITH maxMonths or not at all — a rung carrying one bound and not the other is treated as having none."
@@ -402,7 +621,10 @@
         },
         "signalFields": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "description": "Discovery field names read as timing signals, in `discovery_data.by_source.*`. Defaults to [trigger_date, transaction_date] when omitted. These are EVENT dates, not completion dates — see $comment_direction."
         }
       },
@@ -414,7 +636,10 @@
     },
     "org_input_schema": {
       "description": "Per-org input field declarations. Two accepted shapes (array OR object-map) — normalized by normalizeOrgInputSchema. Kept permissive here.",
-      "type": ["array", "object"]
+      "type": [
+        "array",
+        "object"
+      ]
     },
     "custom_modules": {
       "type": "array",
@@ -488,7 +713,9 @@
     },
     "contextRef": {
       "type": "object",
-      "required": ["context_ref"],
+      "required": [
+        "context_ref"
+      ],
       "properties": {
         "context_ref": {
           "type": "string",
@@ -503,14 +730,25 @@
     },
     "boundStringList": {
       "anyOf": [
-        { "$ref": "#/$defs/contextRef" },
-        { "type": "array", "items": { "type": "string" } }
+        {
+          "$ref": "#/$defs/contextRef"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       ],
       "description": "An R12-bound list dimension: either a context binding or a bare string array. Deliberately permits the literal — the ORG-COUPLING LINT rejects it, not this schema. Two reasons: the lint reports `{location, message, kind: 'org_coupling'}` which is a far better error than a JSON Schema anyOf failure, and it can distinguish an enforced position from a merely-similar one. What this $def adds is TYPE safety, which nothing had: a number, a nested object or a `{context_ref: 123}` at one of these positions previously reached the runtime unchallenged."
     },
     "discoverySource": {
       "type": "object",
-      "required": ["name_field", "fields", "queries"],
+      "required": [
+        "name_field",
+        "fields",
+        "queries"
+      ],
       "additionalProperties": true,
       "properties": {
         "name_field": {
@@ -519,13 +757,17 @@
         },
         "fields": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "minItems": 1,
           "description": "Fields the model is asked to return per record."
         },
         "queries": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "minItems": 1,
           "description": "Search templates, passed to the model VERBATIM. `{market}` is expanded per target market by the scanner before dispatch. A template with no placeholder is passed through once unchanged and carries NO geography — legitimate for a national registry, and the single most expensive mistake in this repo's history when unintentional. Not schema-enforceable either way: `aeo/phases/query_expansion.py` supports both deliberately, so requiring the placeholder would forbid the legitimate case.",
           "$comment_war_story": "The unintentional case, in full: Austin zips in, Dallas firms out, three runs running. ⚠️ MOVED OUT OF `description` 2026-08-10 (thread #28) AND THIS IS A RULE, NOT TIDYING: aeo-agent-service RENDERS `description` FIELDS INTO THE MODEL'S PROMPT (verified 2026-08-12 — their finding, and it is theirs alone; the scanner does NOT read these descriptions, it builds prompts from RESOLVED CONFIG VALUES via `build_prompt`/`phases/validation.py`, which is a different hazard and the reason a literal reaching `default` is live behaviour rather than merely untidy). That parenthetical was the ONLY city literal in the model's entire instruction set, and it anchored a whole invented Austin metro into authored configs — `home_markets: [\"Austin, TX\"]`, plus `Round Rock` and `Pflugerville`, both Austin suburbs, in an org whose address is Charlotte, NC. A memorable proper noun in a rendered field is training data. **Never put a place name, company name, person, or any other concrete proper noun in a `description` here — put it in a `$comment*` key, which is not rendered.** Prose about behaviour is fine and wanted; a specific example that a model can copy is not."
@@ -557,7 +799,10 @@
         },
         "geo_strictness": {
           "type": "string",
-          "enum": ["metro", "state"],
+          "enum": [
+            "metro",
+            "state"
+          ],
           "description": "How a prospect's verified location is judged against the target area. `metro` (runtime default) rejects same-state-but-different-metro; `state` accepts anywhere in state."
         },
         "max_queries_per_source": {

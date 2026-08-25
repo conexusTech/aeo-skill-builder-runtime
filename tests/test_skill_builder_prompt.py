@@ -589,3 +589,48 @@ def test_an_undeclared_section_now_raises_rather_than_using_a_stale_pin():
     schema["properties"]["scoring"].pop("allOf", None)
     with pytest.raises(ValueError, match="scoring"):
         _section_shapes_layer(schema)
+
+
+def test_the_factors_validation_RULE_survives_truncation_into_the_prompt():
+    """The rule that stops the builder authoring a config the finalize gate rejects
+    must reach the MODEL, not merely exist in the schema.
+
+    It did not, for a while, and nothing noticed. Backend restated
+    `scoring.factors`'s description as a hard validation rule with a trigger list;
+    the description was 1,684 chars, `_NOTE_BUDGET` is 400, and the rule sat at
+    offset 1133 — so it was truncated away in full, along with `tiers` at 573 and
+    the earlier advisory wording. The model had never been taught this in ANY
+    framing, and the operator was pasting our reject message back into the
+    conversation every time as the message bus.
+
+    Re-pinning alone would not have fixed that and would have looked like the pin
+    mechanism failing. Backend reordered to put the rule first (536 chars, 342
+    surviving) and this asserts the OUTCOME rather than the pin: a future reorder
+    that buries the rule again fails here instead of shipping quietly.
+
+    Asserted on the composed layer, because `_notes` in isolation proves nothing
+    about what the model is handed.
+    """
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    rendered = _section_shapes_layer(contracts.config_schema())
+    scoring = rendered[rendered.index("  scoring:"):]
+
+    # The rule itself, and that it is framed as a rule rather than a suggestion.
+    assert "VALIDATION RULE" in scoring, "the rule was truncated out of the prompt"
+    assert "REJECTED" in scoring
+
+    # The trigger list, first and last entries -- a partial list is worse than none,
+    # because the model would infer the omitted ones are safe.
+    assert "footage" in scoring, "trigger list truncated at its head"
+    assert "rooms" in scoring, "trigger list truncated at its tail"
+
+    # The bound-field clause. This is the part that made the loop feel arbitrary:
+    # `growth_trajectory` matches no hint by NAME and tripped on the numeric field
+    # it binds to. Backend deliberately put it inside sentence 1 because as its own
+    # sentence it was the first thing truncation took (measured cut at 394/400).
+    assert "source_field" in scoring, "the bound-field clause was truncated"
+
+    # All three remedies. Naming the rule without the fix leaves the model stuck.
+    for remedy in ("`tiers`", "`keywords`", "`min`"):
+        assert remedy in scoring, f"remedy {remedy} truncated out of the prompt"
