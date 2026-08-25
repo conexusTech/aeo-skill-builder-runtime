@@ -547,10 +547,27 @@ def test_scoring_is_now_DERIVED_and_the_pinned_fallback_is_gone():
     scoring = rendered[rendered.index("  scoring:"):]
     # The entry shape must survive derivation — `_type_hint` expanding an array's
     # `items` is what makes that true; without it this reads "list of object".
-    assert "list of {name, weight, min?, max?" in scoring
+    #
+    # Asserted as membership, NOT as the literal ordered prefix this used to pin
+    # ("list of {name, weight, min?, max?"). That form broke on the 2026-08-25
+    # re-pin purely because the gateway inserted `key?` and `source_field?`
+    # between `name` and `weight` — a schema change this test has no business
+    # failing on. Order is the gateway's to choose; expansion is ours to prove.
+    assert "list of object" not in scoring, "the array's items were not expanded"
+    assert "list of {" in scoring
+    for key in ("name", "weight", "min?", "max?", "description?"):
+        assert key in scoring, f"{key} missing from the derived factors shape"
     # And the key OUR proposed fragment omitted, which backend caught.
     assert "disqualify_below" in scoring
     assert "not yet specified" not in rendered
+
+    # The 2026-08-25 graded-scoring vocabulary, so this test also proves the pin
+    # is current: a stale stub renders none of these and every new skill would be
+    # authored presence-only with no ladder.
+    for key in ("factors_max", "priority_bands", "disqualify_rules"):
+        assert key in scoring, f"{key} missing — stub is pre-2026-08-25"
+    for key in ("tiers?", "keywords?", "source_field?"):
+        assert key in scoring, f"{key} missing from the derived factors shape"
 
 
 def test_an_undeclared_section_now_raises_rather_than_using_a_stale_pin():

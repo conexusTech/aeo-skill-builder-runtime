@@ -105,9 +105,60 @@
       "description": "AUTHORING section 3 of 5. Signal validation rules — disqualifiers, required signals. Maps to runtime phase: signal validation.",
       "properties": {
         "in_market_signals": { "$ref": "#/$defs/boundStringList" },
-        "disqualifiers": { "$ref": "#/$defs/boundStringList" }
+        "disqualifiers": { "$ref": "#/$defs/boundStringList" },
+        "lanes": {
+          "type": "array",
+          "description": "Extra enrichment passes, beyond the qualify-or-disqualify verdict above. Each lane asks ONE question of every prospect that survived qualification and returns rows in a shape you declare. Use a lane when the skill needs to LEARN something about a prospect it has already accepted rather than decide whether to accept it — dated timing events (several per prospect, each with a type and a date), or the current supplier classified into one of a few states with its evidence. A scoring factor then binds to the lane by its `key`, exactly as it binds to a collected field. Lane rows are stored under that key, so the key must not be one of `validated`, `signals_found`, `disqualifiers_hit`, `reasoning`.",
+          "items": {
+            "type": "object",
+            "required": ["key", "objective", "fields"],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Identifier for this lane and the name its rows are stored under. A scoring factor reads the lane by naming this in `source_field`."
+              },
+              "name": { "type": "string", "minLength": 1, "description": "Human-readable label." },
+              "objective": {
+                "type": "string",
+                "minLength": 1,
+                "description": "What this lane must find, in plain language. This is the question asked of every surviving prospect, so make it answerable from public evidence and narrow enough that the fields below are always fillable."
+              },
+              "fields": {
+                "type": "array",
+                "minItems": 1,
+                "description": "The lane's output vocabulary. Anything the lane returns outside this list is dropped, and any field in it that the evidence does not support comes back empty — so declare what you will actually score on. If a factor is going to gate on recency, declare a date field here.",
+                "items": {
+                  "oneOf": [
+                    { "type": "string", "minLength": 1 },
+                    {
+                      "type": "object",
+                      "required": ["key"],
+                      "properties": {
+                        "key": { "type": "string", "minLength": 1 },
+                        "description": { "type": "string" }
+                      },
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "data_sources": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "description": "Optional. Where to look — registries, portals, published documents. Omit it and the lane searches broadly."
+              },
+              "max_items": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Optional cap on rows per prospect. Lanes run once per prospect per lane, so this is the main lever on a lane's cost."
+              }
+            },
+            "additionalProperties": true
+          }
+        }
       },
-      "$comment": "Shape ratified 2026-08-04 (thread #17) against what `aeo/phases/validation.py` actually reads, not by design-by-committee. Both fields are R12-bound positions."
+      "$comment": "Shape ratified 2026-08-04 (thread #17) against what `aeo/phases/validation.py` actually reads, not by design-by-committee. `in_market_signals` and `disqualifiers` are R12-bound positions. `lanes` added 2026-08-24: the verdict above is ONE lane with a fixed four-field shape, which is right for a verdict and wrong for anything else a skill needs to learn about an accepted prospect. Read by `aeo/phases/enrichment.py`; rows are stored under each lane's `key` inside `validation_data` (open JSONB, already written by this phase — no migration), which is also how a scoring factor binds to a lane. Lanes run only on prospects that survived qualification, because enriching a known-disqualified prospect is spend on a conclusion nobody reads. A misauthored lane is SKIPPED WITH A LOGGED REASON rather than silently, since a dropped lane is otherwise indistinguishable from a lane that ran and found nothing."
     },
     "contacts": {
       "allOf": [{ "$ref": "#/$defs/section" }],
@@ -124,7 +175,7 @@
       "properties": {
         "factors": {
           "type": "array",
-          "description": "The ICP-fit axis, and the largest single contributor to a score. Each entry names a field this config's own discovery sources collect; a value being present earns full credit, unless min/max are given, which turn presence into a numeric threshold. Name a field the sources actually return — a factor naming a field nothing collects scores zero for every prospect, with no error anywhere.",
+          "description": "The ICP-fit axis, and the largest single contributor to a score. Each factor reads ONE thing this config collects and says how much it is worth. Name the field in `source_field` (a discovery field, or an enrichment lane's key) and use `name` as the human label — a factor that reads a field nothing collects scores zero for every prospect, forever, with no error anywhere. `weight` is the factor's share of the axis; only the ratios between weights matter. HOW IT IS GRADED depends on which table you author, and authoring one is almost always better than leaving it out: `tiers` for a numeric curve (a size band that peaks in the middle), `keywords` for a category or status or job title, `base_points` for dated events that go stale. Author none of those and the factor scores PRESENCE — any value at all earns full credit, so a small value ranks the same as a large one, which is rarely what a criterion with degrees means. ⚠️ `min`/`max` are a cutoff, not a curve, and they apply to presence mode only: `max` makes a LARGER value score zero, so \"5 or more is best\" written as `max: 5` scores the best prospects zero.",
           "items": {
             "type": "object",
             "required": ["name", "weight"],
@@ -132,16 +183,89 @@
               "name": {
                 "type": "string",
                 "minLength": 1,
-                "description": "The collected field this factor reads. Matched loosely against the field names the discovery sources return."
+                "description": "The collected field this factor reads, UNLESS `source_field` is given — then this is only the human-readable label and `source_field` does the reading. Prefer naming the field in `source_field` and using this for the label: a factor whose only binding is its name must be spelled exactly like a field the discovery sources return, and getting that wrong scores zero for every prospect with no error anywhere."
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Stable identifier for this factor, used as its label in the per-factor score breakdown an operator sees. Defaults to `name`. Use it when the criterion and the field have different names — `key: size_fit` reading `source_field: employee_count`."
+              },
+              "source_field": {
+                "description": "The collected field(s) this factor reads, overriding `name`. A list means \"try these in order\", which is how one factor reads two discovery sources that named the same quantity differently — one sweep returns `estimated_headcount`, another returns `employee_estimate`. The first candidate carrying a value wins. Matching ignores case and punctuation but is never fuzzy: name a field the sources actually return.",
+                "oneOf": [
+                  { "type": "string", "minLength": 1 },
+                  { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+                ]
               },
               "weight": {
                 "type": "number",
                 "exclusiveMinimum": 0,
                 "description": "Relative weight within this axis. Weights are normalized across all factors, so only their ratios matter, not their sum."
               },
+              "tiers": {
+                "type": "array",
+                "minItems": 1,
+                "description": "Graded scoring by a NUMERIC value: the highest threshold the value meets wins. Use this instead of min/max whenever the criterion is a curve rather than a cutoff — a size band that peaks in the middle (a mid-sized organization is the best fit and a very large one is worse) is expressible here and is not expressible with min/max. The table may go up and down freely. Points are relative: the largest points value in the table is full credit for this factor, and the factor's `weight` decides its share of the axis. Authoring this switches the factor to graded mode and `min`/`max` are then ignored.",
+                "items": {
+                  "type": "object",
+                  "required": ["threshold", "points"],
+                  "properties": {
+                    "threshold": { "type": "number", "description": "Value at or above which this row applies." },
+                    "points": { "type": "number", "minimum": 0, "description": "Credit awarded at this threshold, relative to the table's own maximum." }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "keywords": {
+                "description": "Graded scoring by TEXT: keyword to points, highest-scoring longest match wins. Use it when a field carries a category rather than a number — an industry, a status, a job title. Points are relative to the table's own maximum, exactly like `tiers`. Matching is case-insensitive substring, and the LONGEST matching keyword wins, so a keyword that contains another (`standalone-recent` contains `standalone`) scores correctly regardless of the order you write them in. Authoring this switches the factor to graded mode and `min`/`max` are then ignored. Three shapes are accepted: an object of keyword to points; a list of {keyword, points}; or a list of {name, points, keywords[]} buckets when several spellings share one score.",
+                "oneOf": [
+                  { "type": "object", "additionalProperties": { "type": "number" }, "minProperties": 1 },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "keyword": { "type": "string", "minLength": 1 },
+                        "keywords": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+                        "name": { "type": "string", "minLength": 1 },
+                        "points": { "type": "number", "minimum": 0 },
+                        "fit_score": { "type": "number", "minimum": 0 }
+                      },
+                      "anyOf": [{ "required": ["keyword"] }, { "required": ["keywords"] }],
+                      "additionalProperties": true
+                    }
+                  }
+                ]
+              },
+              "base_points": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Graded scoring by DATED EVENTS — authoring this switches the factor to event mode. Point the factor's `source_field` at an enrichment lane's `key` and it walks that lane's rows. Every surviving row earns `base_points`; a row also matching `bonus_keywords` earns `base_points + bonus_points`. The BEST row wins; events do not stack, because two current signals are not twice as in-market as one. Use this whenever timing decides value and an old event is worth nothing — no other mode can drop a stale row."
+              },
+              "bonus_points": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Extra points for a row matching `bonus_keywords`. Event mode only."
+              },
+              "bonus_keywords": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "description": "Words that mark a row as the high-urgency kind, matched anywhere in the row. Event mode only."
+              },
+              "date_field": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The field WITHIN a lane row that carries the event's date, enabling the recency window. Declare this field on the lane too. Parsing is strict: a bare year is treated as undated rather than placed in the window, because inventing a month decides staleness by accident."
+              },
+              "recency_months": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "How old an event may be and still count, measured from the run's own scan date. Rows older than this earn NOTHING — not a reduced score. An undated row earns the base but never the bonus: missing evidence must not shrink the result set, nor assert a freshness nothing established. A future date is current."
+              },
               "min": {
                 "type": "number",
-                "description": "Optional lower bound. The first number found in the collected value must be at least this, or the factor earns nothing. Only meaningful for fields whose values are numeric."
+                "description": "Optional lower bound, for PRESENCE mode only — ignored when `tiers` or `keywords` is authored. The first number found in the collected value must be at least this, or the factor earns nothing. Only meaningful for fields whose values are numeric. ⚠️ A bound cannot express partial credit: if the criterion has degrees (\"2 or more is partial, 5 or more is full\"), use `tiers` — and note that `max` makes a larger value score ZERO, which is rarely what a description like that intends."
               },
               "max": {
                 "type": "number",
@@ -158,6 +282,69 @@
         "disqualify_below": {
           "type": "number",
           "description": "Optional score floor. Prospects below it are FLAGGED, never removed — the threshold is chosen before any score distribution has been seen, so it marks a cutoff for review rather than deleting results."
+        },
+        "disqualify_rules": {
+          "type": "array",
+          "description": "Rules that make a prospect INELIGIBLE, whatever it scores — too small, wrong country, a multi-year contract just signed with someone else. Different from `disqualify_below`, which is a score cutoff and therefore a statement about rank: a disqualified prospect may still score well on every other criterion, so no threshold can express this. Evaluated BEFORE any scoring, and a match zeroes the score and records the reason. ⚠️ A rule never fires on a field the prospect does not carry — absence of evidence is not grounds for exclusion, or every prospect whose country the sources failed to return would vanish. If a rule must fire on absence, the fix is to make discovery collect that field.",
+          "items": {
+            "type": "object",
+            "required": ["source_field", "reason"],
+            "properties": {
+              "key": { "type": "string", "minLength": 1, "description": "Short identifier for the rule." },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Why this prospect is ineligible, in words an operator will read on the record. Write it as a statement about the prospect, not about the rule."
+              },
+              "source_field": {
+                "description": "The collected field this rule reads. A list means \"try these in order\".",
+                "oneOf": [
+                  { "type": "string", "minLength": 1 },
+                  { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+                ]
+              },
+              "below": { "type": "number", "description": "Fires when the first number in the field is LESS than this." },
+              "above": { "type": "number", "description": "Fires when the first number in the field is GREATER than this." },
+              "keywords": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "description": "Fires when ANY of these appears in the field."
+              },
+              "required_keywords": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "description": "Fires when NONE of these appears in the field — the \"must be one of\" form, e.g. a served-country list."
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "priority_bands": {
+          "type": "array",
+          "description": "What a score MEANS. A number ranks prospects; a band tells an operator what to do about one — and without bands every consumer invents its own thresholds, so the same score reads as two different verdicts on two screens. Give contiguous ranges covering 0 to `score_cap` with no gaps: a score that falls in a gap has no verdict at all, which is invisible until the one prospect that lands there renders blank.",
+          "items": {
+            "type": "object",
+            "required": ["label"],
+            "properties": {
+              "label": { "type": "string", "minLength": 1, "description": "The verdict, e.g. \"Critical\", \"High\", \"Skip\"." },
+              "range": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": { "type": "number" },
+                "description": "[lowest, highest] score in this band, both inclusive."
+              },
+              "min": { "type": "number", "description": "Alternative to `range`: lowest score, inclusive." },
+              "max": { "type": "number", "description": "Alternative to `range`: highest score, inclusive." },
+              "action": { "type": "string", "description": "What to do — \"Call today\", \"Research\". Shown to the operator." }
+            },
+            "additionalProperties": true
+          }
+        },
+        "factors_max": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Points budget for `factors` as its OWN axis. Omit it and factors borrow the `fit` axis (40 points) exactly as before. Set it and factors become independent of `fit`, which is what lets a skill put its whole budget on its own criteria and zero the axes it did not author — set `region_bonus.max` to 0 when fit is not geographic, or `pipeline.max` to 0 when there is no project timeline. Set this to `score_cap` and every other axis to 0 for a score composed only of the criteria you wrote. A scalar rather than `factors.max` because `factors` is a list."
         },
         "score_cap": {
           "type": "integer",
