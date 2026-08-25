@@ -634,3 +634,21 @@ def test_the_factors_validation_RULE_survives_truncation_into_the_prompt():
     # All three remedies. Naming the rule without the fix leaves the model stuck.
     for remedy in ("`tiers`", "`keywords`", "`min`"):
         assert remedy in scoring, f"remedy {remedy} truncated out of the prompt"
+
+    # And the structural form of the same guarantee, which is stronger than the
+    # probes above: backend shortened the description to 342 chars so it sits
+    # ENTIRELY under the 400 budget and is never truncated at all. So the rendered
+    # note must equal the description verbatim. That catches a future lengthening
+    # past the budget even if it keeps every string this test happens to probe for
+    # -- which is exactly how the rule got buried the first time, at offset 1133 of
+    # 1,684 with `tiers` also cut and nobody noticing.
+    from app.skill_builder.prompt import _NOTE_BUDGET, _notes
+
+    factors = contracts.config_schema()["properties"]["scoring"]["properties"]["factors"]
+    declared = " ".join(factors["description"].split())
+    assert len(declared) <= _NOTE_BUDGET, (
+        f"the factors description is {len(declared)} chars against a {_NOTE_BUDGET} "
+        "budget, so it is being truncated again -- reorder it (owner's job, see the "
+        "_NOTE_BUDGET docblock), do not raise the budget"
+    )
+    assert _notes(factors, "")[0] == declared, "rendered note is not the description verbatim"
