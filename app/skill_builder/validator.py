@@ -54,6 +54,70 @@ def _location(path: Any) -> str:
     return "/" + "/".join(parts) if parts else "/"
 
 
+#: How much of a failing property's `description` to append to a `oneOf` error.
+#: Measured against the four `oneOf` sites in the schema, not guessed:
+#:
+#:   validation.lanes[].fields[]        description absent entirely -> nothing to add
+#:   scoring.factors[].source_field     411 chars, sentences end 61 / 269 / 312
+#:   scoring.factors[].keywords         724 chars, sentences end 79 / 177 / 247 / 465
+#:   scoring.disqualify_rules[]...      71 chars, one sentence
+#:
+#: 320 is the smallest budget that keeps the SHAPE-DISTINGUISHING sentence at both
+#: sites that have one. For `keywords` the shape is sentence 1 ("keyword to points,
+#: highest-scoring longest match wins") so almost any budget works; for
+#: `source_field` it is sentence 2 ("A list means 'try these in order'"), which is
+#: the string-vs-array distinction the `oneOf` is actually about — and a 240 budget
+#: cuts it at 61, leaving only the identity sentence and none of the shape. That is
+#: the same mistake in miniature as the one this whole feature exists to fix.
+#:
+#: Deliberately NOT shared with `prompt._NOTE_BUDGET`, which is a different policy
+#: with a different cost: that one is paid on the cached prefix of every turn, this
+#: one on a single message at failure time. Same mechanic, separate numbers, and
+#: importing prompt rendering into the validator would be the wrong direction.
+_ONEOF_DESCRIPTION_BUDGET = 320
+
+
+def _shape_hint(err: Any) -> str:
+    """The failing property's own `description`, for a `oneOf` error only.
+
+    jsonschema's `oneOf` message is "… is not valid under any of the given
+    schemas" — the least informative thing it emits, because it discards which
+    branch was closest and why. The answer is usually sitting on the property that
+    failed: `err.schema` for a `oneOf` is the property subschema, so its
+    `description` states the accepted shapes.
+
+    Why this exists: on 2026-08-25 the builder authored
+    `keywords: ['hiring surge', ...]` — a bare list where all three accepted shapes
+    carry points — and could not self-correct from the bare message. The shapes had
+    to be taught up front in the prompt instead, which cost two re-pins and a
+    deploy each because they had to survive a 400-char prompt budget. Delivering
+    them at failure time removes that constraint: the next unstated shape needs no
+    deploy at all.
+
+    Returns "" when there is nothing useful to add, which is a real case:
+    `validation.lanes[].fields[]` is a `oneOf` with no description.
+
+    (`err.context` holds the per-branch sub-errors if a future need wants to say
+    which branch came closest; the description alone is what carries the shapes.)
+    """
+    if err.validator != "oneOf" or not isinstance(err.schema, dict):
+        return ""
+    raw = err.schema.get("description")
+    if not isinstance(raw, str):
+        return ""
+    text = " ".join(raw.split())
+    if not text:
+        return ""
+    if len(text) > _ONEOF_DESCRIPTION_BUDGET:
+        cut = text.rfind(". ", 0, _ONEOF_DESCRIPTION_BUDGET)
+        text = (
+            text[: cut + 1]
+            if cut > 0
+            else text[:_ONEOF_DESCRIPTION_BUDGET].rstrip() + "…"
+        )
+    return text
+
+
 def issues_for_schema(
     schema: dict[str, Any], instance: Any
 ) -> list[ValidationIssue]:
@@ -61,13 +125,19 @@ def issues_for_schema(
 
     The single jsonschema→ValidationIssue mapping — config validation and
     tool-arg validation both go through here (DRY / SRP: all schema-validation
-    lives in this module).
+    lives in this module). That is why `_shape_hint` lands here: every `oneOf` in
+    the schema gets it at once, rather than one shape at a time via the prompt.
     """
     validator = Draft202012Validator(schema)
-    issues = [
-        ValidationIssue(location=_location(err.absolute_path), message=err.message)
-        for err in validator.iter_errors(instance)
-    ]
+    issues = []
+    for err in validator.iter_errors(instance):
+        message = err.message
+        hint = _shape_hint(err)
+        if hint:
+            message = f"{message} Accepted shapes: {hint}"
+        issues.append(
+            ValidationIssue(location=_location(err.absolute_path), message=message)
+        )
     issues.sort(key=lambda i: (i.location, i.message))
     return issues
 
