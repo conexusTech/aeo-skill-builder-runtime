@@ -617,8 +617,16 @@ def test_the_factors_validation_RULE_survives_truncation_into_the_prompt():
     scoring = rendered[rendered.index("  scoring:"):]
 
     # The rule itself, and that it is framed as a rule rather than a suggestion.
-    assert "VALIDATION RULE" in scoring, "the rule was truncated out of the prompt"
-    assert "REJECTED" in scoring
+    #
+    # Asserted on "RULE" and "REJECTED" rather than the full phrase this once
+    # pinned ("VALIDATION RULE"). Backend compressed the preamble to "RULE, not
+    # advice" on 2026-08-25 to buy room for the tier-key clause, and this failed on
+    # their wording rather than on anything being wrong -- the same mistake as the
+    # ordered-prefix assertion further up this file. Their phrasing is theirs to
+    # choose; what must hold is that the framing is imperative and names the
+    # consequence.
+    assert "RULE" in scoring, "the rule was truncated out of the prompt"
+    assert "REJECTED" in scoring, "the consequence is not stated"
 
     # The trigger list, first and last entries -- a partial list is worse than none,
     # because the model would infer the omitted ones are safe.
@@ -631,9 +639,24 @@ def test_the_factors_validation_RULE_survives_truncation_into_the_prompt():
     # sentence it was the first thing truncation took (measured cut at 394/400).
     assert "source_field" in scoring, "the bound-field clause was truncated"
 
-    # All three remedies. Naming the rule without the fix leaves the model stuck.
-    for remedy in ("`tiers`", "`keywords`", "`min`"):
+    # The remedies, as literal SHAPES rather than bare key names. Naming the rule
+    # without the shape is what produced the 2026-08-25 rounds: v26 delivered the
+    # rule and the model authored `keywords: [...]`; v27 delivered the shapes.
+    for remedy in ("`tiers`", "[{threshold,points}]", "`keywords`", "{word:points}"):
         assert remedy in scoring, f"remedy {remedy} truncated out of the prompt"
+
+    # `min` must NOT be offered as a grading option beside the tier shape. That
+    # adjacency is what had the model authoring tier rows as {min, max, points}:
+    # it read three grading choices in one breath and combined two. Backend moved
+    # `min` into a sentence that says where it DOES belong, so the prompt must
+    # still mention it -- as a factor-level key, not a grading remedy.
+    assert "factor-level" in scoring, (
+        "the sentence placing `min`/`max` at factor level was truncated -- without "
+        "it `min` reads as a third grading option again"
+    )
+    assert "those keys ONLY" in scoring, (
+        "the additionalProperties:false statement was truncated"
+    )
 
     # And the structural form of the same guarantee, which is stronger than the
     # probes above: backend shortened the description to 342 chars so it sits
