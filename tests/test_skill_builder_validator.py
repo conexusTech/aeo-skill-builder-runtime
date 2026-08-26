@@ -216,3 +216,79 @@ def test_a_value_error_still_gets_no_shape_hint():
     issue = _issue_at(cfg, "/scoring/factors/0/weight")
     assert issue is not None
     assert "Accepted shapes:" not in issue.message
+
+
+def test_fit_keyword_scores_without_text_fields_is_rejected():
+    """Backend's `fitAxis.dependencies` (2026-08-26) — the two keys are a PAIR.
+
+    `score_fit` reads `cfg["text_fields"]` off a config SHALLOW-MERGED over the
+    engine's own default, so authoring `keyword_scores` alone silently inherits
+    `["project_description", "project_type"]` — the first customer this engine ever
+    served. On any other vertical those are never collected, the joined text is
+    empty, and the axis scores zero while carrying both a budget and a keyword
+    table. The symptom points at the table, not at the field list.
+
+    Note the asymmetry this closes: the engine's `has_factors and not
+    fit.keyword_scores` gate exists so a factored config cannot inherit the vendored
+    keyword TABLE. Its partner key had no such guard, so passing that gate was
+    precisely what opened the leak.
+    """
+    cfg = _factor()
+    cfg["scoring"]["fit"] = {"max": 20, "keyword_scores": {"carrier switch": 10}}
+    issue = _issue_at(cfg, "/scoring/fit")
+    assert issue is not None, "keyword_scores without text_fields must be rejected"
+    assert "text_fields" in issue.message
+
+    # ...and the paired form is clean, so the rule cannot pass by rejecting both.
+    cfg["scoring"]["fit"]["text_fields"] = ["renewal_signal_type"]
+    assert _issue_at(cfg, "/scoring/fit") is None
+
+
+def test_we_validate_against_the_draft_the_contract_DECLARES():
+    """🔴 Regression guard for a silent inertness, not a style preference.
+
+    `issues_for_schema` was pinned to `Draft202012Validator` while all five pinned
+    contracts declare `draft-07`. `dependencies` was REMOVED in 2020-12 (split into
+    `dependentRequired`), so the rule above was not merely unenforced — the keyword
+    did not exist for us, and an unknown keyword is ignored in silence. Backend had
+    chosen ENFORCEMENT over prose specifically so our prompt truncation could not
+    drop it, and it was dropped here instead.
+
+    Asserted two ways, because either alone is escapable:
+
+    1. the resolver honours a declared `$schema` (a hardcoded validator passes a
+       test that only checks the pair rule, if that rule is ever restated in a
+       keyword both drafts share); and
+    2. a draft-07-only keyword is genuinely ENFORCED end to end.
+    """
+    from jsonschema import Draft7Validator, validators
+
+    from app.skill_builder import contracts
+
+    schema = contracts.config_schema()
+    assert schema["$schema"] == "http://json-schema.org/draft-07/schema#"
+    assert validators.validator_for(schema) is Draft7Validator
+
+    # A draft-07-only keyword, enforced through the real entry point. Under a
+    # 2020-12 validator this instance yields ZERO issues.
+    draft7_only = {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "dependencies": {"a": ["b"]},
+    }
+    assert validator.issues_for_schema(draft7_only, {"a": 1}), (
+        "a draft-07 `dependencies` rule must be enforced, not silently ignored"
+    )
+    assert not validator.issues_for_schema(draft7_only, {"a": 1, "b": 2})
+
+
+def test_a_schema_declaring_no_draft_still_validates():
+    """`validator_for` falls back to the LATEST draft when `$schema` is absent.
+
+    Worth pinning: the tool-arg path shares `issues_for_schema`, and an inline
+    schema built in code declares nothing. The fallback must keep working rather
+    than raising or silently accepting everything.
+    """
+    undeclared = {"type": "object", "required": ["a"]}
+    assert validator.issues_for_schema(undeclared, {})
+    assert not validator.issues_for_schema(undeclared, {"a": 1})

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from jsonschema import Draft202012Validator
+from jsonschema import validators
 from pydantic import BaseModel
 
 from app.skill_builder import contracts
@@ -182,7 +182,29 @@ def issues_for_schema(
     lives in this module). That is why `_shape_hint` lands here: every `oneOf` in
     the schema gets it at once, rather than one shape at a time via the prompt.
     """
-    validator = Draft202012Validator(schema)
+    # 🔴 Validate against the draft the CONTRACT declares, not a hardcoded newer
+    # one. All five pinned contracts say `draft-07`; this was pinned to
+    # Draft202012Validator, and `dependencies` was REMOVED in 2020-12 (split into
+    # `dependentRequired`). So a draft-07 `dependencies` rule was not merely
+    # unenforced — the keyword did not exist for us, and an unknown keyword is
+    # ignored in silence.
+    #
+    # Measured when backend added `fitAxis.dependencies: {keyword_scores:
+    # [text_fields]}` — authoring `keyword_scores` alone inherits the vendored
+    # `["project_description", "project_type"]` through a shallow merge and scores
+    # zero, so the pair is a correctness rule, not a style one. They chose
+    # ENFORCEMENT over prose precisely so our prompt truncation could not drop it;
+    # it was dropped here instead. Their ajv (draft-07) does reject it, so the
+    # gateway gates held — what we lost was the in-session catch, i.e. the
+    # `_shape_hint` teaching layer never gets to explain it.
+    #
+    # `validator_for` honours `$schema` and falls back to the latest draft when a
+    # schema declares none, so this is strictly more correct for every contract.
+    # Verified behaviour-preserving before switching: across the four production
+    # configs plus four synthetic edges, 7 of 8 verdicts are byte-identical and
+    # the only difference is the intended pair rule. None of the five contracts
+    # uses a construct whose meaning differs between the drafts.
+    validator = validators.validator_for(schema)(schema)
     issues = []
     for err in validator.iter_errors(instance):
         message = err.message
