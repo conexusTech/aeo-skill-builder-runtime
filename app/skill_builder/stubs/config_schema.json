@@ -563,7 +563,7 @@
           "$ref": "#/$defs/scoringAxis"
         },
         "fit": {
-          "$ref": "#/$defs/scoringAxis"
+          "$ref": "#/$defs/fitAxis"
         },
         "region_bonus": {
           "$ref": "#/$defs/scoringAxis"
@@ -818,6 +818,39 @@
         }
       },
       "$comment": "Shape ratified 2026-08-04 (thread #17) against what `aeo/runner.py` actually reads. Every knob is OPTIONAL and the runtime carries its own default for each, so this $def exists purely for TYPE enforcement — which nothing had: `max_search_zips: \"10\"` or `geo_strictness: \"strict\"` previously reached the scanner, where the first is `int()`-coerced by luck and the second silently falls back to `metro`. `geo_strictness` is the only enumerable one; the values are STRICTNESS_METRO/STRICTNESS_STATE at geo_filter.py:136-137."
+    },
+    "fitAxis": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "The `fit` axis. Separate from $defs/scoringAxis because fit is the ONE axis whose internals are not engine-defaulted: completeness / region_bonus / multi_source / pipeline all have engine defaults and earn without configuration, whereas score_fit() has no default vocabulary and awards 0 when factors are authored and keyword_scores is absent. ⚠️ These two keys were briefly added to the SHARED def, which told an author they were available on all five axes — the other four IGNORE them, so that would have created a new class of silently-dead config while fixing the old one. Fit gets its own def so the keys are offered exactly where they work.",
+      "properties": {
+        "max": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum points this axis can contribute. Only the ceiling is declared here — how the axis earns its points is engine-owned and vertical-neutral."
+        },
+        "keyword_scores": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Without this key the engine scores the fit axis as ZERO whenever `scoring.factors` are authored, so declaring `fit.max: 20` and omitting it forfeits all 20 points silently. Either author it — together with `text_fields`, which is required alongside it — or set `fit.max: 0` and mean it. keyword -> points, matched case-insensitively against the text of the fields named in `text_fields`. Measured 2026-08-26: every own-axis skill then in existence declared a fit budget and omitted this, earning none of it."
+        },
+        "text_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "REQUIRED whenever `keyword_scores` is authored, and naming fields discovery actually collects. Omitting it does NOT disable the axis — the engine shallow-merges over its own default and inherits `[\"project_description\", \"project_type\"]`, the fields of the first customer this engine ever served. On any other vertical those are never collected, the joined text is empty, and the axis scores zero while carrying both a budget and a keyword table — which reads as \"my keywords are wrong\" rather than \"I am matching the wrong fields\". Raised by aeo-skill-builder-runtime, who traced the merge rather than assuming it."
+        }
+      },
+      "dependencies": {
+        "keyword_scores": [
+          "text_fields"
+        ]
+      }
     }
   }
 }
