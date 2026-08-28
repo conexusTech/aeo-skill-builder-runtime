@@ -61,7 +61,12 @@ def _location(path: Any) -> str:
 #:   scoring.factors[].tiers          599 chars, sentences end  79 / 331 / 368 / 516
 #:   scoring.factors[].keywords       724 chars,                79 / 177 / 247 / 465
 #:   scoring.factors[].source_field   411 chars,                61 / 269 / 312
-#:   scoring.priority_bands           408 chars,                20 / 221
+#:   scoring.priority_bands           408 chars,                20 / 208
+#:      ⚠️ re-measured after the 20c05f3 re-pin: backend swapped its two
+#:      sentences so the contiguous-ranges RULE now lands first and ends at 208.
+#:      Same length, different boundary -- a shape error on this property used to
+#:      append the rationale and now appends the rule, which is an improvement
+#:      nobody asked for and nothing pinned. Pinned now, in test_skill_builder_validator.
 #:   scoring.disqualify_rules         692 chars,                139 / 341 / 424
 #:   validation.lanes[].fields        271 chars,                30 / 204  (all of it)
 #:

@@ -701,28 +701,31 @@ def test_the_scoring_budget_remedies_survive_truncation_into_the_prompt():
     Asserted on the composed layer, because `_notes` in isolation proves nothing
     about what the model is handed.
     """
+    import re
+
     from app.skill_builder.prompt import _NOTE_BUDGET, _notes, _section_shapes_layer
 
-    rendered = _section_shapes_layer(contracts.config_schema())
+    schema = contracts.config_schema()
+    props = schema["properties"]["scoring"]["properties"]
+    rendered = _section_shapes_layer(schema)
     scoring = rendered[rendered.index("  scoring:"):]
-    props = contracts.config_schema()["properties"]["scoring"]["properties"]
 
-    # -- factors_max: the remedy, and the fact that silence is not zero.
+    # -- factors_max: the remedy must land inside the cut.
     note = _notes(props["factors_max"], "")[0]
     assert len(note) <= _NOTE_BUDGET, "the renderer overran its own budget"
-    assert "every other axis to 0" in scoring, (
-        "the general form of the budget remedy was truncated -- what remains is "
-        "worked examples, which name only some of the axes"
-    )
-    assert "NOT 0" in scoring, (
-        "the sentence stating that an unmentioned axis is not zero was truncated; "
-        "without it the worked examples read as optional tidying"
-    )
+    assert note in scoring, "the note is not what the composed layer carries"
 
-    # All FIVE defaults, by name and by value. A partial list is worse than none:
-    # the model would infer the omitted axes are zero, which is the defect. The
-    # numbers are engine facts (`_DEFAULT_SCORING` in the scanner), not prose, so
-    # pinning them here is pinning a contract rather than backend's phrasing.
+    # All FIVE defaults. This IS the structural proof that the remedy sentence
+    # survived -- it is the only sentence carrying them -- so no separate probe
+    # for its wording is needed, and that matters: the test above this one
+    # records being burned TWICE by pinning backend's phrasing, and a bare
+    # `"every other axis to 0" in scoring` would be a third.
+    #
+    # A partial list is worse than none, because the model would infer the
+    # omitted axes are zero, which is the defect. The axis names are config keys
+    # and the numbers are engine facts (`_DEFAULT_SCORING` in the scanner), so
+    # both are contract; only the separator between them is prose, hence \W{0,3}
+    # rather than a literal space.
     for axis, default in (
         ("fit", 25),
         ("pipeline", 30),
@@ -730,7 +733,7 @@ def test_the_scoring_budget_remedies_survive_truncation_into_the_prompt():
         ("region_bonus", 10),
         ("multi_source", 10),
     ):
-        assert f"{axis} {default}" in note, (
+        assert re.search(rf"{re.escape(axis)}\W{{0,3}}{default}\b", note), (
             f"the {axis} default ({default}) is not in the rendered note -- either "
             "truncated, or the list was shortened. multi_source was the one missing "
             "before 20c05f3 and it is one of the two that cause the finding"
@@ -739,7 +742,7 @@ def test_the_scoring_budget_remedies_survive_truncation_into_the_prompt():
     # -- priority_bands: the contiguous-ranges rule, lost by 8 chars before 20c05f3.
     bands = _notes(props["priority_bands"], "")[0]
     assert len(bands) <= _NOTE_BUDGET, "the renderer overran its own budget"
-    assert "no gaps" in bands, (
+    assert re.search(r"no gaps|contiguous", bands), (
         "the contiguous-ranges rule was truncated again -- reorder it (owner's job, "
         "see the _NOTE_BUDGET docblock), do not raise the budget"
     )

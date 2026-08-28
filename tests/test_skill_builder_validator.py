@@ -1,6 +1,8 @@
 """draftConfig validation — incremental vs complete modes (PRD §6)."""
 
-from app.skill_builder import draft, validator
+import re
+
+from app.skill_builder import contracts, draft, validator
 
 
 def _full():
@@ -292,3 +294,36 @@ def test_a_schema_declaring_no_draft_still_validates():
     undeclared = {"type": "object", "required": ["a"]}
     assert validator.issues_for_schema(undeclared, {})
     assert not validator.issues_for_schema(undeclared, {"a": 1})
+
+
+def test_a_shape_error_on_priority_bands_carries_the_contiguous_ranges_RULE():
+    """The 20c05f3 re-pin silently changed which sentence a shape error appends.
+
+    `priority_bands` stayed 408 chars, so the drift test and every length-based
+    check saw nothing, but backend swapped its two sentences: the boundary moved
+    from 221 to 208 and the text surviving the 340 budget went from the RATIONALE
+    ("a band tells an operator what to do about one") to the RULE ("contiguous
+    ranges covering 0 to `score_cap` with no gaps").
+
+    That is an improvement -- the actionable half now reaches a failing author --
+    but it was incidental to a re-pin taken for a different reason, and nothing
+    pinned it. Same length, different meaning, no test: exactly the shape of
+    change that gets reverted by the next well-intentioned reorder.
+
+    Driven through `issues_for_schema` rather than `_shape_hint` directly, so it
+    proves the sentence reaches a real message and not just the helper.
+    """
+    schema = contracts.config_schema()
+    issues = validator.issues_for_schema(schema, {"scoring": {"priority_bands": [{}]}})
+
+    band = [i for i in issues if i.location == "/scoring/priority_bands/0"]
+    assert band, "no shape error was produced for a band missing its label"
+    message = band[0].message
+
+    assert "Accepted shapes:" in message, "the shape hint did not attach at all"
+    assert re.search(r"no gaps|contiguous", message), (
+        "a shape error on priority_bands no longer carries the contiguous-ranges "
+        "rule -- the description was reordered and the RULE fell past the "
+        "_SHAPE_DESCRIPTION_BUDGET cut again"
+    )
+    assert "score_cap" in message, "the rule no longer says what the ranges must cover"
