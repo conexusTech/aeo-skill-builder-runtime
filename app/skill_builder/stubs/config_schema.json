@@ -500,7 +500,7 @@
         },
         "priority_bands": {
           "type": "array",
-          "description": "What a score MEANS. A number ranks prospects; a band tells an operator what to do about one — and without bands every consumer invents its own thresholds, so the same score reads as two different verdicts on two screens. Give contiguous ranges covering 0 to `score_cap` with no gaps: a score that falls in a gap has no verdict at all, which is invisible until the one prospect that lands there renders blank.",
+          "description": "What a score MEANS. Give contiguous ranges covering 0 to `score_cap` with no gaps: a score that falls in a gap has no verdict at all, which is invisible until the one prospect that lands there renders blank. A number ranks prospects; a band tells an operator what to do about one — and without bands every consumer invents its own thresholds, so the same score reads as two different verdicts on two screens.",
           "items": {
             "type": "object",
             "required": [
@@ -540,7 +540,7 @@
         "factors_max": {
           "type": "integer",
           "minimum": 0,
-          "description": "Points budget for `factors` as its OWN axis. Omit it and factors borrow the `fit` axis (40 points) exactly as before. Set it and factors become independent of `fit`, which is what lets a skill put its whole budget on its own criteria and zero the axes it did not author — set `region_bonus.max` to 0 when fit is not geographic, or `pipeline.max` to 0 when there is no project timeline. Set this to `score_cap` and every other axis to 0 for a score composed only of the criteria you wrote. A scalar rather than `factors.max` because `factors` is a list."
+          "description": "Points budget for `factors` as its OWN axis. Omit it and factors borrow the `fit` axis (40 points) exactly as before. Set this to `score_cap` and every other axis to 0 for a score composed only of the criteria you wrote — an axis you never mention is NOT 0, it takes an engine default: fit 25, pipeline 30, completeness 15, region_bonus 10, multi_source 10. Set it and factors become independent of `fit`, which is what lets a skill put its whole budget on its own criteria and zero the axes it did not author — set `region_bonus.max` to 0 when fit is not geographic, or `pipeline.max` to 0 when there is no project timeline. A scalar rather than `factors.max` because `factors` is a list."
         },
         "score_cap": {
           "type": "integer",
