@@ -266,15 +266,123 @@ def test_a_schema_only_shape_appears_without_touching_this_module():
     assert "A key nobody has written code for." in rendered
 
 
-def test_nested_definitions_expand_one_level_and_no_further():
+def test_nested_definitions_expand_and_carry_their_reasoning():
     """`targeting` renders as a bare 'object' without the nested pass, losing that
-    `use_zip_discovery` falsy means SKIP. Bounded at one level so this stays a
-    renderer rather than becoming a second jsonschema."""
+    `use_zip_discovery` falsy means SKIP."""
     from app.skill_builder.prompt import _section_shapes_layer
 
     rendered = _section_shapes_layer(contracts.config_schema())
     assert "use_zip_discovery" in rendered
     assert "FALSY MEANS SKIP" in rendered
+
+
+def _three_level_schema():
+    """A section property nested three deep, shaped like the prospect scoring
+    redesign's `gate` block — the shape that forced `_MAX_NESTING_DEPTH` to 2."""
+    import copy
+
+    schema = copy.deepcopy(contracts.config_schema())
+    schema["properties"]["scoring"]["properties"]["gate"] = {
+        "type": "object",
+        "description": "LEVEL ONE description.",
+        "properties": {
+            "target_market": {
+                "type": "object",
+                "description": "LEVEL TWO description.",
+                "properties": {
+                    "allowed_states_from": {
+                        "type": "string",
+                        "description": "LEVEL THREE description.",
+                        "properties": {
+                            "deeper": {
+                                "type": "string",
+                                "description": "LEVEL FOUR description.",
+                            }
+                        },
+                    }
+                },
+            }
+        },
+    }
+    return schema
+
+
+def test_a_leaf_two_levels_below_a_section_property_reaches_the_model():
+    """The prospect scoring redesign put every field that carries meaning two
+    levels below `scoring`. Measured against the real renderer before the bound
+    moved: 12 of 12 leaf descriptions were dropped, the model was handed
+    `target_market — object` and nothing else, and the state-normalisation rule
+    that is the actual fix for the dead `region_bonus` axis was among them.
+
+    Asserts the KEY and its DESCRIPTION separately: a key name with no reasoning
+    beside it is the `{"max": N}` defect the gate block exists to stop, so
+    rendering the name alone would satisfy a laxer test and teach nothing.
+    """
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    rendered = _section_shapes_layer(_three_level_schema())
+    assert "allowed_states_from" in rendered
+    assert "LEVEL THREE description." in rendered
+
+
+def test_the_expansion_stops_at_two_levels():
+    """The bound is the whole reason this is a renderer and not a schema walker,
+    whose bugs would surface as authoring errors.
+
+    The test this replaces was named `..._one_level_and_no_further` and asserted
+    only that level-two content was PRESENT — it never checked "no further", so
+    the name over-claimed against what ran. Both halves are asserted here.
+    """
+    from app.skill_builder.prompt import _MAX_NESTING_DEPTH, _section_shapes_layer
+
+    assert _MAX_NESTING_DEPTH == 2
+    rendered = _section_shapes_layer(_three_level_schema())
+    assert "LEVEL TWO description." in rendered
+    assert "LEVEL FOUR description." not in rendered
+    assert "deeper" not in rendered
+
+
+def test_an_arrays_item_properties_are_named_but_not_described():
+    """A deliberate boundary, and the measurement is the reason for it.
+
+    `_type_hint` names an object item's KEYS (`list of {...}`) and stops, so a
+    description written on an array item's property reaches the model at no depth.
+    Extending into them is NOT free the way the depth change was: `scoring.factors`
+    alone carries 14 described item properties (~4,300 chars) and
+    `validation.lanes` six more, so it would drag thousands of characters into
+    every prompt — the `_NOTE_BUDGET` spillover this change was argued as not
+    having. A schema author puts array-item semantics on the array property
+    itself, where it renders.
+    """
+    import copy
+
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    schema = copy.deepcopy(contracts.config_schema())
+    schema["properties"]["scoring"]["properties"]["bonus"] = {
+        "type": "object",
+        "properties": {
+            "bands": {
+                "type": "array",
+                "description": "ARRAY PROPERTY description.",
+                "items": {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "table": {
+                            "type": "object",
+                            "description": "ITEM PROPERTY description.",
+                        },
+                    },
+                },
+            }
+        },
+    }
+    rendered = _section_shapes_layer(schema)
+    assert "list of {name, table?}" in rendered      # keys are named
+    assert "ARRAY PROPERTY description." in rendered  # the array's own note renders
+    assert "ITEM PROPERTY description." not in rendered
 
 
 def test_a_direct_context_ref_property_is_not_re_expanded():

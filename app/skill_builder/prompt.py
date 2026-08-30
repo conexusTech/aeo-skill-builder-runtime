@@ -269,10 +269,46 @@ def _notes(subschema: dict[str, Any], indent: str) -> list[str]:
     return [f"{indent}{text}"]
 
 
+#: How many levels below a section property the shapes layer expands.
+#:
+#: Was 1 until 2026-08-31. The bound itself was never the point — its stated
+#: justification was "nothing in the ratified shapes nests deeper", and the
+#: prospect scoring redesign is what makes that false: the `gate` block puts
+#: `state_field`, `allowed_states_from`, `window_stages` and
+#: `signal_freshness_months` two levels below `scoring`, and the lane bases and
+#: ceilings under `partial` sit there too.
+#:
+#: 🔴 Measured before the change, against the real `_section_shapes_layer` rather
+#: than predicted: rendering that block at depth 1 dropped **12 of 12** leaf
+#: descriptions. The model was handed `target_market — object` and nothing else —
+#: thread #30's author-something-that-validates-and-is-ignored, one level down,
+#: inside the feature built to fix scoring. The state-normalisation rule that is
+#: the ACTUAL fix for the dead `region_bonus` axis was among the twelve, which is
+#: the same way `tiers.description` was written and silently discarded for two
+#: rounds under `factors.items`.
+#:
+#: 🔑 And the cost of raising it was measured before it was proposed, because that
+#: argument has been abused here before: **0 new lines and 0 new characters**
+#: against the schema pinned at the time. Nothing in it nested three deep, so this
+#: renders nothing new until backend's gate block exists. That is what makes it
+#: unlike `_NOTE_BUDGET`, where raising the cap would have dragged ~20 unrelated
+#: field tails into every prompt — there is no spillover here.
+#:
+#: ⛔ Bounded at TWO, and it must stay bounded. Unbounded recursion would make this
+#: a schema walker whose bugs surface as authoring errors, which is worse than a
+#: thin prompt. If a third level is ever needed, measure the render first and
+#: prefer asking the description's owner to move the content up — the same rule
+#: `_NOTE_BUDGET` settles for truncation.
+_MAX_NESTING_DEPTH = 2
+
+
 def _nested_object_lines(
-    subschema: dict[str, Any], defs: dict[str, Any], indent: str
+    subschema: dict[str, Any],
+    defs: dict[str, Any],
+    indent: str,
+    depth: int = _MAX_NESTING_DEPTH,
 ) -> list[str]:
-    """Expand a `$ref`'d object definition ONE level, keys and reasoning included.
+    """Expand a `$ref`'d object definition, keys and reasoning included.
 
     Necessary, not decorative: the two rules that matter most live one level below
     a section property. `geography.targeting` renders as a bare "object" without
@@ -280,9 +316,14 @@ def _nested_object_lines(
     `geo_strictness` is a two-value enum — and `discovery.sources` loses the
     `{market}` guidance on `queries` entirely.
 
-    Bounded at one level on purpose. Recursing would make this a schema walker
-    whose bugs surface as authoring errors, and nothing in the ratified shapes
-    nests deeper.
+    Bounded at `_MAX_NESTING_DEPTH`; see the reasoning on that constant, including
+    why it moved from 1 to 2 and what it cost.
+
+    ⚠️ An ARRAY's item properties are not expanded here — `_type_hint` names their
+    KEYS (`list of {name, max, table?}`) and stops. So a description written on an
+    array item's property does not reach the model at any depth. That is a
+    deliberate boundary, not an oversight, and it is the one shape a schema author
+    still has to write around: put the semantics on the array property itself.
     """
     target = subschema
     ref = subschema.get("$ref", "")
@@ -315,6 +356,11 @@ def _nested_object_lines(
             flag = " (required)" if key in required else ""
             lines.append(f"{indent}  {key}{flag} — {_type_hint(sub, defs)}")
         lines.extend(_notes(sub, indent + "      "))
+        if depth > 1:
+            # `indent + 6` is the established step, not a new one: a section
+            # property's note sits 4 past its key and its child key 2 past that,
+            # so every level keeps keys at `indent + 2` and notes at `indent + 6`.
+            lines.extend(_nested_object_lines(sub, defs, indent + "      ", depth - 1))
     return lines
 
 
