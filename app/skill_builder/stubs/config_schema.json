@@ -762,7 +762,7 @@
         },
         "partial": {
           "type": "object",
-          "description": "What a lead scores when it does NOT clear both gates. Three lanes, each with its own starting point and hard ceiling, so a marginal lead scores genuinely low instead of being compressed toward the middle. Keep every ceiling below `floor` — that gap is what makes a qualified lead distinguishable at a glance.",
+          "description": "What a lead scores when it does NOT clear both gates. ⚠️ Use these bases exactly: target_market_only 25, signal_only 10, neither 0 — with ceilings 45 / 30 / 15. A lane scores `min(base + bonus.max, ceiling)`, so a ceiling under `floor` is NOT enough: base 40 reaches 60 and fills the 46-79 band the model keeps empty.",
           "properties": {
             "target_market_only": {
               "type": "object",

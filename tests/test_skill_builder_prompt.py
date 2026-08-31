@@ -978,3 +978,33 @@ def test_the_gated_default_and_its_trigger_survive_the_note_budget():
         "the condition telling the builder WHEN to author a gate would not reach it"
     )
     assert "signal_date" in rendered
+
+def test_the_partial_lane_bases_survive_the_SHAPE_error_budget_too():
+    """`scoring.partial` must render whole at BOTH budgets, not just the prompt's.
+
+    Backend's first version said "keep every ceiling below `floor`". A real gated
+    config then authored `target_market_only` base 40 / ceiling 65 — both ceilings
+    genuinely below 80, and their own lint passed it with 0 issues. But a lane
+    scores `min(base + bonus.max, ceiling)`, so base 40 with a 20-point bonus
+    reaches 60 and lands inside 46-79, the band the whole model exists to keep
+    structurally empty. **A ceiling constraint cannot express a base constraint.**
+
+    The fix is text: the bases are now stated as fixed values with the `min()`
+    arithmetic that explains why. So the thing to pin is not the wording but that
+    the sentence carrying the arithmetic SURVIVES — and at 340, not 400, because
+    `_SHAPE_DESCRIPTION_BUDGET` is the tighter of the two and a cut there would
+    drop the arithmetic while leaving the reassuring first sentence intact,
+    restoring exactly the latitude that produced 40 and 30.
+    """
+    from app.skill_builder.prompt import _notes
+    from app.skill_builder.validator import _SHAPE_DESCRIPTION_BUDGET
+
+    node = contracts.config_schema()["properties"]["scoring"]["properties"]["partial"]
+    raw = " ".join(str(node["description"]).split())
+
+    assert len(raw) <= _SHAPE_DESCRIPTION_BUDGET, (
+        f"`partial` is {len(raw)} chars against the {_SHAPE_DESCRIPTION_BUDGET}-char shape-error "
+        "budget: the min() arithmetic would be cut at failure time"
+    )
+    assert _notes(node, "")[0] == raw
+    assert "min(base" in raw, "the arithmetic that makes a ceiling-only rule insufficient is gone"
