@@ -899,3 +899,49 @@ def test_the_four_bonus_bands_are_named_properties_not_an_array():
     assert "bands" not in props, "the retired array shape is back; see the docblock"
     for band in ("signal_strength", "company_size", "confirmed_contact", "signal_recency"):
         assert band in props, f"{band} is not a declared property of `bonus`"
+
+def test_a_forbidden_key_is_never_expanded():
+    """Found by the audit pass over the depth-2 change, not by a failing test.
+
+    At depth 1 the question could not arise. At depth 2 it can: `_nested_object_lines`
+    marks a `not: {}` child "NEVER author this", and the recursion would then render
+    that child's own properties — teaching the model how to author the very thing
+    the line above forbids, which is worse than silence because it reads as a
+    specification.
+
+    Unreachable on today's schema: the only `not: {}` node
+    (`$defs.discoverySource.seed_firms`) declares no properties. Pinned against a
+    synthetic node that does, because "unreachable today" is a fact about the schema
+    and not about our renderer.
+
+    ⚠️ The forbidden node must sit ONE LEVEL BELOW a section property, which is where
+    the marker logic lives. My first version of this test put it at section-property
+    level and failed with the guard in place — `_section_shapes_layer`'s own loop has
+    no `not: {}` handling at all, so a forbidden SECTION property is never marked.
+    That gap is pre-existing and unreachable (no such node exists); recorded here
+    rather than fixed, so whoever adds one finds the reason.
+    """
+    import copy
+
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    schema = copy.deepcopy(contracts.config_schema())
+    schema["properties"]["contacts"]["properties"]["wrapper"] = {
+        "type": "object",
+        "properties": {
+            "banned": {
+                "not": {},
+                "type": "object",
+                "properties": {
+                    "secret_knob": {
+                        "type": "string",
+                        "description": "SHOULD NEVER RENDER.",
+                    }
+                },
+            }
+        },
+    }
+    rendered = _section_shapes_layer(schema)
+    assert "banned — NEVER author this" in rendered
+    assert "secret_knob" not in rendered
+    assert "SHOULD NEVER RENDER." not in rendered

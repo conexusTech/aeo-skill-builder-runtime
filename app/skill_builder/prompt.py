@@ -348,19 +348,28 @@ def _nested_object_lines(
         return []
     required = [r for r in (_as_dict(target).get("required") or []) if isinstance(r, str)]
     lines: list[str] = []
+    # `indent + 6` is the established step, not a new one: a section property's
+    # note sits 4 past its key and its child key 2 past that, so every level keeps
+    # keys at `indent + 2` and notes at `indent + 6`. Bound once — `_notes` and the
+    # recursion must not be able to drift apart.
+    child_indent = indent + "      "
     for key, sub in props.items():
         sub = sub if isinstance(sub, dict) else {}
-        if sub.get("not") == {}:
+        forbidden = sub.get("not") == {}
+        if forbidden:
             lines.append(f"{indent}  {key} — NEVER author this")
         else:
             flag = " (required)" if key in required else ""
             lines.append(f"{indent}  {key}{flag} — {_type_hint(sub, defs)}")
-        lines.extend(_notes(sub, indent + "      "))
-        if depth > 1:
-            # `indent + 6` is the established step, not a new one: a section
-            # property's note sits 4 past its key and its child key 2 past that,
-            # so every level keeps keys at `indent + 2` and notes at `indent + 6`.
-            lines.extend(_nested_object_lines(sub, defs, indent + "      ", depth - 1))
+        lines.extend(_notes(sub, child_indent))
+        # Never descend into a key we just forbade. Unreachable on today's schema —
+        # the one `not: {}` node (`discoverySource.seed_firms`) declares no
+        # properties — but at depth 1 the question could not arise, and at depth 2
+        # it can: rendering a forbidden key's shape teaches the model how to author
+        # the thing the line above tells it never to author, which is worse than
+        # silence because it reads as a specification.
+        if depth > 1 and not forbidden:
+            lines.extend(_nested_object_lines(sub, defs, child_indent, depth - 1))
     return lines
 
 
