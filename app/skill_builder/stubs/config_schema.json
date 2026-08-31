@@ -573,6 +573,245 @@
         },
         "pipeline": {
           "$ref": "#/$defs/scoringAxis"
+        },
+        "model": {
+          "type": "string",
+          "enum": [
+            "legacy",
+            "gated"
+          ],
+          "description": "Which scoring model runs. Omit or `legacy` for the additive sum over the axes below — that path is unchanged and is what every existing skill uses. `gated` switches to the floor-plus-bonus model: a lead passing both gates starts at `floor` and can only go up. Set `gated` ONLY when `gate`, `floor`, `bonus` and `partial` are all authored; the model reads all four."
+        },
+        "gate": {
+          "type": "object",
+          "description": "The two conditions that decide whether a lead is QUALIFIED, under `model: gated`. Both must hold. This is the term the additive model has no way to express: with seven axes summed, being qualified is worth nothing on its own, so a lead in the right place at the right time still has to earn points from axes that measure something else entirely.",
+          "properties": {
+            "target_market": {
+              "type": "object",
+              "description": "Gate 1 — is this lead somewhere the customer actually sells? Reads the prospect's state and compares it against the markets the org declared.",
+              "properties": {
+                "state_field": {
+                  "type": "string",
+                  "description": "The prospect field holding the state. Almost always `state`."
+                },
+                "allowed_states_from": {
+                  "type": "string",
+                  "description": "Context reference to the org's declared home markets, normally `geographic_strategy.home_markets`. RESOLVING TO AN EMPTY OR UNMATCHABLE LIST ADMITS NOBODY — every lead fails this gate closed, which is worse than the axis it replaces, so the config lint refuses it."
+                },
+                "state_aliases": {
+                  "type": "object",
+                  "description": "Full-name to abbreviation map, e.g. {\"north carolina\": \"NC\"}. REQUIRED IN PRACTICE and the single most common way this gate silently fails: an org writes \"North Carolina\" while every prospect carries \"NC\", so without the map the two never match and no lead is ever in market. Matching normalises in BOTH directions. If omitted, the engine falls back to `region_bonus.state_aliases`.",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "exclude_rules_from": {
+                  "type": "string",
+                  "description": "Context reference to the org's disqualifiers, normally `icp_seeds.disqualifiers`. A lead matching one fails the gate even when its state is right."
+                }
+              }
+            },
+            "buying_window": {
+              "type": "object",
+              "description": "Gate 2 — is this lead in market NOW? Needs BOTH an active pipeline stage AND at least one signal inside the freshness window. ANY fresh signal opens it: the strongest signal does not decide admission, because a stale strong signal beside a fresh weak one would otherwise close the gate on exactly the evidence it exists to detect.",
+              "properties": {
+                "stage_field": {
+                  "type": "string",
+                  "description": "The prospect field holding the pipeline stage."
+                },
+                "window_stages": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The stage names that count as an active buying window. Must be exact keys from this skill's own `pipeline.stages` vocabulary — a name that is not a real rung can never match, so the gate closes for everyone."
+                },
+                "signal_date_path": {
+                  "type": "string",
+                  "description": "Where the dated signals live, e.g. `validation_data.switching_signal[].signal_date`."
+                },
+                "signal_freshness_months": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "How recent a signal must be to count as in-market. Compared STRICTLY (younger than, not equal to), so a signal exactly this many months old does not qualify. Deliberately stricter than the recency bonus below, which awards inclusively: strict about admitting, generous about crediting a lead already admitted."
+                }
+              }
+            }
+          }
+        },
+        "floor": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The score a lead gets for clearing BOTH gates, before any bonus. Everything above this is earned; nothing can subtract from it. Set with `score_cap` so the gap equals `bonus.max` — floor 80 and cap 100 leaves exactly 20 points of bonus, which makes the range between the highest gated-out score and the floor structurally empty and therefore auditable: any score landing in it is a bug."
+        },
+        "bonus": {
+          "type": "object",
+          "description": "Points a QUALIFIED lead earns above the floor — the only thing separating one qualified lead from another. Never negative. The four bands are NAMED PROPERTIES: `signal_strength`, `company_size`, `confirmed_contact`, `signal_recency`. ⚠️ An omitted band scores the SAME for every prospect in the run (zero, or the midpoint for `signal_strength`) with no error anywhere, so author all four.",
+          "properties": {
+            "max": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Total bonus available. Should equal `score_cap` minus `floor`, or the top of the range is unreachable."
+            },
+            "signal_strength": {
+              "type": "object",
+              "description": "How much the SELECTED signal's KIND is worth. The selected signal is the strongest among the fresh ones, so the prose, the strength and the date all describe one finding. ⚠️ A signal whose class is missing from `classes` scores this band's MIDPOINT, never zero: \"we could not classify this\" is not evidence of weakness.",
+              "properties": {
+                "max": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Points this band can award."
+                },
+                "field": {
+                  "type": "string"
+                },
+                "classes": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "description": "Canonical signal class -> points, e.g. {\"rfp_active\": 8, \"broker_carrier_change\": 6}. Author every class this vertical can produce; an unlisted one lands on the band midpoint. ⚠️ Counter-intuitive consequence: that midpoint can OUTRANK a class you deliberately scored low, so teaching the map a new WEAK class moves those leads DOWN, not up."
+                },
+                "synonyms": {
+                  "type": "object",
+                  "description": "Optional free-text phrasings mapped onto each class, for the transition period before the scanner emits a canonical class directly. Matching is SUBSTRING plus DECLARATION ORDER, and that order is load-bearing: of 54 observed phrasings, 7 match more than one class."
+                }
+              },
+              "required": [
+                "max"
+              ]
+            },
+            "company_size": {
+              "type": "object",
+              "description": "Headcount, banded via `tiers`. ⚠️ Set `unknown` to the band MIDPOINT, not zero. Treating \"we do not know the headcount\" as \"this is a tiny company\" is data hygiene leaking into the score, and it mis-ranked 7 of 17 qualified leads before it was fixed.",
+              "properties": {
+                "max": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Points this band can award."
+                },
+                "field": {
+                  "type": "string",
+                  "description": "Where headcount is read from. Defaults to `employee_count`."
+                },
+                "tiers": {
+                  "type": "array",
+                  "description": "DESCENDING list of [threshold, points] pairs, e.g. [[400,4],[200,3],[100,2],[50,1]]. A company at or above a threshold earns its points; one below every threshold earns `below_lowest`."
+                },
+                "below_lowest": {
+                  "type": "integer"
+                },
+                "unknown": {
+                  "type": "integer",
+                  "description": "Points when headcount is absent or unparseable. Use the band midpoint."
+                }
+              },
+              "required": [
+                "max"
+              ]
+            },
+            "confirmed_contact": {
+              "type": "object",
+              "description": "How reachable the lead is. `rules` is a list of [field, points] pairs that ADD together, e.g. [[\"contact_name\",2],[\"contact_email\",1],[\"contact_phone\",1]]. A field counts when present and non-empty; the sum is capped at `max`.",
+              "properties": {
+                "max": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Points this band can award."
+                },
+                "rules": {
+                  "type": "array"
+                }
+              },
+              "required": [
+                "max"
+              ]
+            },
+            "signal_recency": {
+              "type": "object",
+              "description": "How fresh the SELECTED signal is. `months` is an ASCENDING list of [months, points] pairs, e.g. [[1,4],[3,3],[6,2],[12,1]]. ⚠️ Matched INCLUSIVELY — a signal exactly this old still earns the points — deliberately the opposite of the freshness GATE, where exactly-at-the-boundary FAILS.",
+              "properties": {
+                "max": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Points this band can award."
+                },
+                "field": {
+                  "type": "string"
+                },
+                "months": {
+                  "type": "array",
+                  "description": "Ascending [months, points] pairs. The first pair whose month count is >= the signal's age wins, so order them from freshest to stalest."
+                },
+                "beyond_last": {
+                  "type": "integer"
+                },
+                "partial_precision": {
+                  "type": "string"
+                },
+                "future": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "max"
+              ]
+            }
+          }
+        },
+        "partial": {
+          "type": "object",
+          "description": "What a lead scores when it does NOT clear both gates. Three lanes, each with its own starting point and hard ceiling, so a marginal lead scores genuinely low instead of being compressed toward the middle. Keep every ceiling below `floor` — that gap is what makes a qualified lead distinguishable at a glance.",
+          "properties": {
+            "target_market_only": {
+              "type": "object",
+              "description": "Right place, wrong time: in the target market, no live buying window. The nurture lane, and normally the highest of the three — geography is the harder thing to change.",
+              "properties": {
+                "base": {
+                  "type": "integer"
+                },
+                "ceiling": {
+                  "type": "integer"
+                }
+              }
+            },
+            "signal_only": {
+              "type": "object",
+              "description": "Right time, wrong place: actively buying, but outside the territory this customer can serve. Ranks below nurture.",
+              "properties": {
+                "base": {
+                  "type": "integer"
+                },
+                "ceiling": {
+                  "type": "integer"
+                }
+              }
+            },
+            "neither": {
+              "type": "object",
+              "description": "Neither gate. Data completeness only — both signal bands need a signal, so such a lead can earn size and contact points and nothing else.",
+              "properties": {
+                "base": {
+                  "type": "integer"
+                },
+                "ceiling": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "signal_source": {
+          "type": "string",
+          "description": "Which `validation_data` key holds this skill's dated switching signals, e.g. `switching_signal`. PER-SKILL, not shared: a vertical whose enrichment writes its signals somewhere else must say so here, and one whose signals carry no dates cannot use `model: gated` at all — the freshness half of the buying-window gate has nothing to measure and every lead would fail it."
+        },
+        "priority_band_source": {
+          "type": "string",
+          "enum": [
+            "range",
+            "lane"
+          ],
+          "description": "Where a prospect's priority label comes from. `range` (default) looks the score up in `priority_bands`. `lane` takes the label from the gate lane instead, which is what `model: gated` wants — but KEEP authoring numeric ranges in `priority_bands` regardless: consumers that find no numeric range treat the skill as having declared no ladder at all and silently drop both colour and sort order."
         }
       },
       "$comment": "Declared 2026-08-12 (thread #32), and every property was read off the engine's actual read sites rather than transcribed from the thread: `factors` + min/max at av_lead_scanner.py score_config_factors/_factor_credit, `score_cap`/`ai_adjustment` at :1290-1291, `disqualify_below` at :1365, the five axis `max` values at _DEFAULT_SCORING. WHY THIS EXISTS: `scoring` previously declared nothing, so each knob the engine consumed was invisible to every other repo — aeo-agent-service's drift test compares published files and there was no file difference to detect, which is how the engine's vocabulary went stale in their layer inside four hours. TWO DEVIATIONS FROM THE PROPOSED FRAGMENT, both deliberate: (1) `disqualify_below` was NOT in the proposal and the engine does read it — the same undercount class the thread exists to close, found by checking instead of trusting. (2) `required: [name, weight]` and `exclusiveMinimum: 0` are a TIGHTENING, not the 'pure relaxation' the proposal claimed: the engine defaults a missing weight to 1 and silently SKIPS weight<=0, so both cases are legal today and become errors here. Kept because an implicit weight of 1 beside an explicit 25 is near-certainly not what the operator meant, and a skipped factor is invisible — but it is a behaviour change, argued rather than smuggled. Safe as a non-bump because `factors` is new: no shipped config declares it. The vertical-shaped internals (fit.keyword_scores, pipeline.statuses/phase_fallback, region_bonus.regions/state_aliases, multi_source.tiers, completeness.fields) are deliberately NOT declared — the PO ruled they must go, and completeness.fields is now derived from the config's own sources when unset, so declaring it would invite a model to author what the runtime computes better. KNOWN GAP, evidenced not theorised: a factor cannot express RECENCY. On run b29b3416 a 2023 permit earned the same full credit as one from last month, and min/max cannot fix it because the bound reads the first number in the value — a date yields its year, and the collected formats varied enough ('August 2026', '02/14/2024', '2026-07-30') that any threshold would compare against 2026, 2 and 2026. Do not add a date bound to this shape without a real date parser."

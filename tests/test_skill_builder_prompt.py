@@ -855,3 +855,47 @@ def test_the_scoring_budget_remedies_survive_truncation_into_the_prompt():
         "see the _NOTE_BUDGET docblock), do not raise the budget"
     )
     assert "score_cap" in bands, "the rule no longer says what the ranges must cover"
+
+def test_the_gated_model_keys_reach_the_authoring_prompt():
+    """The whole point of `_MAX_NESTING_DEPTH = 2`, asserted on the SHIPPED pin.
+
+    These four keys sit two levels below `scoring` and rendered to nothing before
+    2026-08-31. `state_aliases` is the one that matters most: the org writes
+    "North Carolina", every prospect carries "NC", nothing matches, and no lead is
+    ever in market with nothing thrown. It is a SEMANTIC rule, so the validator's
+    shape-error path cannot teach it either — `_SHAPE_VALIDATORS` only fires on
+    `oneOf` / `required` / `additionalProperties`, and a gate that admits nobody is
+    structurally valid. The prompt is the only place it can be taught, which is why
+    a re-pin that silently dropped it would be invisible everywhere else.
+
+    Asserts KEYS, not backend's wording: this file has been burned three times by
+    literal-string assertions failing on a harmless reword.
+    """
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    rendered = _section_shapes_layer(contracts.config_schema())
+    for key in (
+        "state_aliases",          # gate.target_market.* — the silent-failure trap
+        "allowed_states_from",
+        "window_stages",          # gate.buying_window.*
+        "signal_freshness_months",
+    ):
+        assert key in rendered, f"{key} no longer reaches the authoring prompt"
+
+
+def test_the_four_bonus_bands_are_named_properties_not_an_array():
+    """Backend keyed bands by DISPLAY NAME until 2026-08-31 — a case-sensitive
+    string match with a space in it, validated by nothing. `Company Size` for
+    `Company size` scored that band 0; all four mis-cased cost 14 points (98 -> 84)
+    with the lane still `qualified`, nothing thrown and nothing logged.
+
+    Named properties make a mis-spelling an authoring error instead. Pinned here
+    because the array shape reappearing would restore the silent class AND put the
+    band semantics back in one description that cannot fit (measured at 1,439 chars
+    against a 400 budget, 25.7% rendered).
+    """
+    bonus = contracts.config_schema()["properties"]["scoring"]["properties"]["bonus"]
+    props = bonus.get("properties") or {}
+    assert "bands" not in props, "the retired array shape is back; see the docblock"
+    for band in ("signal_strength", "company_size", "confirmed_contact", "signal_recency"):
+        assert band in props, f"{band} is not a declared property of `bonus`"
