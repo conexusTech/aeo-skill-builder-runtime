@@ -160,7 +160,7 @@
         },
         "lanes": {
           "type": "array",
-          "description": "Extra enrichment passes, beyond the qualify-or-disqualify verdict above. Each lane asks ONE question of every prospect that survived qualification and returns rows in a shape you declare. Use a lane when the skill needs to LEARN something about a prospect it has already accepted rather than decide whether to accept it — dated timing events (several per prospect, each with a type and a date), or the current supplier classified into one of a few states with its evidence. A scoring factor then binds to the lane by its `key`, exactly as it binds to a collected field. Lane rows are stored under that key, so the key must not be one of `validated`, `signals_found`, `disqualifiers_hit`, `reasoning`.",
+          "description": "Extra enrichment passes beyond the qualify-or-disqualify verdict. Each lane asks ONE question of every accepted prospect and returns rows in a shape you declare. ⚠️ Author at least one lane whose `fields` include `signal_date`: the gated scoring model reads it for the buying-window gate, and a skill without one cannot be gated.",
           "items": {
             "type": "object",
             "required": [
@@ -580,7 +580,8 @@
             "legacy",
             "gated"
           ],
-          "description": "Which scoring model runs. Omit or `legacy` for the additive sum over the axes below — that path is unchanged and is what every existing skill uses. `gated` switches to the floor-plus-bonus model: a lead passing both gates starts at `floor` and can only go up. Set `gated` ONLY when `gate`, `floor`, `bonus` and `partial` are all authored; the model reads all four."
+          "description": "Which scoring model runs. ⚠️ `gated` is the DEFAULT for a NEW skill — author it whenever this skill has a validation lane carrying `signal_date` and the org declares home markets. It requires `gate`, `floor`, `bonus` and `partial`, all four. Choose `legacy` only when the vertical has no dated buying signal.",
+          "default": "gated"
         },
         "gate": {
           "type": "object",
@@ -803,7 +804,7 @@
         },
         "signal_source": {
           "type": "string",
-          "description": "Which `validation_data` key holds this skill's dated switching signals, e.g. `switching_signal`. PER-SKILL, not shared: a vertical whose enrichment writes its signals somewhere else must say so here, and one whose signals carry no dates cannot use `model: gated` at all — the freshness half of the buying-window gate has nothing to measure and every lead would fail it."
+          "description": "Which validation lane carries the dated buying signal the gate reads. Defaults to `switching_signal`. Set it when your dated lane has a different `key` — pointing at a lane that does not exist fails the buying-window gate for every lead, and the run completes with no error."
         },
         "priority_band_source": {
           "type": "string",

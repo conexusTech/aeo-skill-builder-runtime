@@ -945,3 +945,36 @@ def test_a_forbidden_key_is_never_expanded():
     assert "banned — NEVER author this" in rendered
     assert "secret_knob" not in rendered
     assert "SHOULD NEVER RENDER." not in rendered
+
+def test_the_gated_default_and_its_trigger_survive_the_note_budget():
+    """`gated` became the DEFAULT for new skills on 2026-08-31, with a trigger.
+
+    Backend's first attempt at this steered the OTHER way — *"Omit or `legacy` …
+    that path is unchanged and is what every existing skill uses"* — and a real
+    authoring session read it and chose legacy, which we all scored as a PASS
+    against a criterion that only asked whether the retired `bands` array appeared.
+    It was a fail against what the product wanted.
+
+    So two things are pinned, and neither is backend's wording:
+
+    - `default` is the contract's own declaration, not prose.
+    - The note must render WHOLE. A trigger truncated at a sentence boundary is
+      the `_NOTE_BUDGET` failure this repo has hit four times, and here it would
+      silently restore the old behaviour: the model would read what `gated` IS and
+      never reach the condition telling it when to author one.
+
+    Asserts `signal_date` because that is the field the condition keys on — a
+    contract token the engine reads, which survives a reword.
+    """
+    from app.skill_builder.prompt import _notes
+
+    model = contracts.config_schema()["properties"]["scoring"]["properties"]["model"]
+    assert model.get("default") == "gated"
+
+    raw = " ".join(str(model["description"]).split())
+    rendered = _notes(model, "")[0]
+    assert rendered == raw, (
+        f"the `model` trigger is truncated at {len(rendered)} of {len(raw)} chars — "
+        "the condition telling the builder WHEN to author a gate would not reach it"
+    )
+    assert "signal_date" in rendered
