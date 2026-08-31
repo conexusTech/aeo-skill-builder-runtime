@@ -1008,3 +1008,36 @@ def test_the_partial_lane_bases_survive_the_SHAPE_error_budget_too():
     )
     assert _notes(node, "")[0] == raw
     assert "min(base" in raw, "the arithmetic that makes a ceiling-only rule insufficient is gone"
+
+def test_the_literal_allow_list_the_gate_reads_is_declared_and_renders_whole():
+    """`allowed_states` is the field whose ABSENCE produced a dead gate.
+
+    Until backend's `8c41783` it was not a declared property at all, so the shapes
+    layer could not teach it and the model could not author it. What the model
+    could see was `allowed_states_from` — and backend's own lint told the author to
+    *"declare `allowed_states_from`"*. It did exactly that. Nothing in either repo
+    dereferences `_from`; `in_target_market` reads the LITERAL and returns False on
+    an empty set, so **every lead failed G1**, nothing reached `floor`, and the book
+    capped at a partial ceiling with no error anywhere.
+
+    That is the same mechanism measured earlier in this workstream: the model
+    authors the declared shape, and only the declared shape. An undeclared key is
+    not a key the model omits — it is one it cannot write.
+
+    Pinned at 340 as well as 400: this description carries the distinction between
+    the literal and the `_from` pointer, and a cut restores the exact ambiguity that
+    produced the dead gate.
+    """
+    from app.skill_builder.prompt import _notes, _section_shapes_layer
+    from app.skill_builder.validator import _SHAPE_DESCRIPTION_BUDGET
+
+    tm = (contracts.config_schema()["properties"]["scoring"]["properties"]
+          ["gate"]["properties"]["target_market"]["properties"])
+    assert "allowed_states" in tm, "the literal allow-list the gate reads is not declared"
+
+    raw = " ".join(str(tm["allowed_states"]["description"]).split())
+    assert len(raw) <= _SHAPE_DESCRIPTION_BUDGET
+    assert _notes(tm["allowed_states"], "")[0] == raw
+
+    # and it must actually reach the model, which is what half A made possible
+    assert "allowed_states" in _section_shapes_layer(contracts.config_schema())
