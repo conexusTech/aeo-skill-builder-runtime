@@ -611,18 +611,20 @@
                   "description": "Documentation of where `exclude_rules` came from, normally `icp_seeds.disqualifiers`. ⚠️ NOT dereferenced — nothing in the gateway or the scanner reads it, so it cannot populate the gate. Authoring it alone means NO lead is ever excluded, which looks identical to a clean market. Write the literal `exclude_rules` too."
                 },
                 "allowed_states": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  },
-                  "description": "⚠️ REQUIRED under `model: gated` — the ONLY key gate 1 reads. Two-letter codes, e.g. `[\"MI\", \"IN\"]`. Derive them from the org's home markets and write the RESULT here: a market often reads `\"Grand Rapids MI\"`, so the state must be extracted first. An empty or absent list admits NOBODY and caps the whole book."
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/boundStringList"
+                    }
+                  ],
+                  "description": "⚠️ REQUIRED under `model: gated` — the ONLY key gate 1 reads. Prefer the binding `{\"context_ref\": \"home_markets\"}`, which the scanner resolves per org so the gate never goes stale; a literal like `[\"MI\", \"IN\"]` also works. `allowed_states_from` does NOT: nothing dereferences it. Empty or absent admits NOBODY."
                 },
                 "exclude_rules": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  },
-                  "description": "Substrings that DISQUALIFY a lead at gate 1, matched case-insensitively against company name, industry and description — e.g. `[\"franchise\", \"staffing agency\"]`. ⚠️ Only this literal is read; `exclude_rules_from` cannot populate it. Omit it entirely when the org declares no disqualifiers."
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/boundStringList"
+                    }
+                  ],
+                  "description": "Substrings that DISQUALIFY a lead at gate 1, matched against company name, industry and description. Prefer `{\"context_ref\": \"disqualifiers\"}`; a literal like `[\"franchise\"]` also works. ⚠️ `exclude_rules_from` does NOT — nothing dereferences it. Omit entirely when the org declares no disqualifiers."
                 }
               }
             },

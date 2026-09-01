@@ -180,6 +180,24 @@ def _type_hint(subschema: dict[str, Any], defs: dict[str, Any]) -> str:
     Schema tutorial, and a deep renderer would be a second implementation of
     jsonschema whose bugs would show up as authoring errors.
     """
+    # A `$ref` wrapped in a single-element `allOf` is the same reference. Backend
+    # writes it that way deliberately: draft-07 IGNORES siblings of a bare `$ref`,
+    # so `{"$ref": ..., "description": ...}` silently loses the description, and
+    # `allOf` is the standard way to keep both. Unwrapping it here is not a schema
+    # walker — it is recognising one idiom that means exactly what `$ref` means.
+    #
+    # 🔴 Measured 2026-09-01, when `allowed_states` and `exclude_rules` moved to that
+    # form: they rendered as `value` where `contacts.titles`, a bare `$ref` to the
+    # SAME `$def`, rendered `{"context_ref": "<key>"} or a list of strings`. The
+    # suite stayed green because the scar test asserts the KEY reaches the model and
+    # says nothing about the hint beside it — a property the degraded case also
+    # satisfies, which is the third instance of that shape in this file.
+    all_of = subschema.get("allOf")
+    if not subschema.get("$ref") and isinstance(all_of, list) and len(all_of) == 1:
+        inner = all_of[0]
+        if isinstance(inner, dict) and isinstance(inner.get("$ref"), str):
+            subschema = {**inner, **{k: v for k, v in subschema.items() if k != "allOf"}}
+
     ref = subschema.get("$ref", "")
     if isinstance(ref, str) and ref.startswith("#/$defs/"):
         name = ref.rsplit("/", 1)[1]

@@ -1247,3 +1247,33 @@ def test_priority_bands_carries_both_of_its_rules_at_the_tighter_budget():
         "shape-error budget — one of its two rules is being cut"
     )
     assert _notes(node, "")[0] == raw
+
+def test_a_bound_key_renders_its_BINDING_hint_not_just_its_name():
+    """Closes the blind spot in `test_every_gate_key_the_engine_reads_...`.
+
+    That test asserts the key REACHES the model and says nothing about the hint
+    beside it — so when `allowed_states` and `exclude_rules` moved from
+    `type: array` to `allOf: [{$ref: boundStringList}]`, they began rendering as
+    bare `value` and the suite stayed green. `contacts.titles`, a bare `$ref` to the
+    SAME `$def`, rendered `{"context_ref": "<key>"} or a list of strings` throughout.
+
+    🔑 Backend's `allOf` is CORRECT, not a workaround: draft-07 ignores siblings of a
+    bare `$ref`, so `{"$ref": ..., "description": ...}` loses the description
+    silently. Keeping both requires `allOf`. The gap was ours — `_type_hint`
+    understood one spelling of a reference and not the other.
+
+    Third instance in this file of asserting a property the failing case also
+    satisfies: the key was present, the hint was useless, and only rendering the
+    line and reading it showed the difference.
+    """
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    layer = _section_shapes_layer(contracts.config_schema())
+    for key in ("allowed_states", "exclude_rules", "titles"):
+        line = next((l.strip() for l in layer.splitlines()
+                     if l.strip().startswith(key + " ")), None)
+        assert line is not None, f"{key} does not reach the model at all"
+        assert "context_ref" in line, (
+            f"`{key}` renders as {line!r} — the binding form is not being taught, so "
+            "the model cannot know it may bind instead of hard-coding a literal"
+        )
