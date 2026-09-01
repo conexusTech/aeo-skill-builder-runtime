@@ -1198,6 +1198,15 @@ def test_the_buying_window_defaults_name_their_value_not_just_their_semantics():
     is legitimate for an org that states it. Only naming the default and pricing the
     deviation can. So the pin is that the default is NAMED — 18 is the engine's
     fallback, a contract value, not backend's phrasing.
+
+    🔄 UPDATED 2026-09-01: the PO has since ruled `window_stages` defaults to ALL
+    SEVEN rungs, terminal ones included, so the stage condition can no longer reject
+    anything and gate 2 turns on the fresh signal alone. **The decomposition above
+    stands as history and its arithmetic is unchanged** — it is why the stage term
+    was known to dominate — but do not read it as describing the current default.
+    Measured on the same book: 36 of 159 qualified at stages 1-5, 63 at all seven,
+    and all 27 additions are `7 - Too Late`, i.e. already-lost deals surfaced
+    deliberately. The 46-79 empty band is 0 either way.
     """
     from app.skill_builder.prompt import _notes
     from app.skill_builder.validator import _SHAPE_DESCRIPTION_BUDGET
@@ -1379,3 +1388,38 @@ def test_signal_source_offers_a_value_every_vertical_can_actually_use():
         "truncation boundary, so it never reaches a failing author"
     )
     assert _notes(node, "")[0] == raw
+
+def test_window_stages_ships_a_default_so_the_model_need_not_choose():
+    """The eleventh pin's lesson applied BEFORE it could bite: when the default is
+    the defect, the fix is on the authoring surface, so give the surface a default.
+
+    `window_stages` previously named no value, and two unrelated verticals authored
+    the same narrow 3-of-5 list — the signature of schema-driven authoring. It now
+    ships a `default` of all seven rungs, so a new skill gets the PO's ruling without
+    the model choosing at all.
+
+    Asserts the `default` STRUCTURALLY (seven entries, terminal rungs included)
+    rather than the prose, for the same reason `floor`'s `const` is checked
+    structurally: a description saying "all seven" while the `default` says five
+    would leave every prose assertion passing.
+    """
+    from app.skill_builder.prompt import _notes
+    from app.skill_builder.validator import _SHAPE_DESCRIPTION_BUDGET
+
+    ws = (contracts.config_schema()["properties"]["scoring"]["properties"]
+          ["gate"]["properties"]["buying_window"]["properties"]["window_stages"])
+
+    default = ws.get("default")
+    assert isinstance(default, list) and len(default) == 7, (
+        f"`window_stages` default is {default!r} — a new skill would be back to the "
+        "model choosing its own stage list"
+    )
+    for terminal in ("6 - Likely Awarded", "7 - Too Late"):
+        assert terminal in default, (
+            f"{terminal!r} dropped from the default — the stage condition can reject "
+            "again, which reverses the PO ruling silently"
+        )
+
+    raw = " ".join(str(ws["description"]).split())
+    assert len(raw) <= _SHAPE_DESCRIPTION_BUDGET
+    assert _notes(ws, "")[0] == raw

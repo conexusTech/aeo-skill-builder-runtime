@@ -636,11 +636,12 @@
                   "description": "⚠️ NOT read by the scanner — the pipeline stage is passed to the gate by the caller, so naming a field here has no effect and cannot redirect it. Left declared only so an existing config keeps validating. Leave it absent."
                 },
                 "window_stages": {
+                                    "default": ["1 - Early Discovery", "2 - Relationship Building", "3 - Design Influence", "4 - Active Pursuit", "5 - Decision Imminent", "6 - Likely Awarded", "7 - Too Late"],
                   "type": "array",
                   "items": {
                     "type": "string"
                   },
-                  "description": "Stage names that do NOT rule a lead out — normally EVERY stage in `pipeline.stages`, earliest included. The fresh signal decides in-market; this list only excludes rungs where a deal is already lost. ⚠️ Measured: dropping the two earliest cost 23 of 35 qualified leads on a real book."
+                  "description": "Stage names that do NOT rule a lead out. Default: EVERY stage in `pipeline.stages`, terminal rungs included — the fresh signal is what decides in-market, and a recently-decided account still surfaces. Measured: all 7 rather than 1-5 moved 36 to 63 qualified on a real book, every added lead a lost deal."
                 },
                 "signal_date_path": {
                   "type": "string",
