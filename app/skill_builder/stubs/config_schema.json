@@ -619,12 +619,11 @@
                   "description": "⚠️ REQUIRED under `model: gated` — the ONLY key gate 1 reads. Prefer the binding `{\"context_ref\": \"home_markets\"}`, which the scanner resolves per org so the gate never goes stale; a literal like `[\"MI\", \"IN\"]` also works. `allowed_states_from` does NOT: nothing dereferences it. Empty or absent admits NOBODY."
                 },
                 "exclude_rules": {
-                  "allOf": [
-                    {
-                      "$ref": "#/$defs/boundStringList"
-                    }
-                  ],
-                  "description": "Substrings that DISQUALIFY a lead at gate 1, matched against company name, industry and description. Prefer `{\"context_ref\": \"disqualifiers\"}`; a literal like `[\"franchise\"]` also works. ⚠️ `exclude_rules_from` does NOT — nothing dereferences it. Omit entirely when the org declares no disqualifiers."
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Substrings that DISQUALIFY a lead at gate 1, matched against company name, industry and description — e.g. `[\"franchise\", \"staffing agency\"]`. ⚠️ A LIST only. Do NOT bind `{\"context_ref\": \"disqualifiers\"}` here: that key resolves to the org's free PROSE, which the gate iterates character by character and excludes everyone."
                 }
               }
             },

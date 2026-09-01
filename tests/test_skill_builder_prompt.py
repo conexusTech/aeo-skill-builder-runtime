@@ -1269,11 +1269,37 @@ def test_a_bound_key_renders_its_BINDING_hint_not_just_its_name():
     from app.skill_builder.prompt import _section_shapes_layer
 
     layer = _section_shapes_layer(contracts.config_schema())
-    for key in ("allowed_states", "exclude_rules", "titles"):
+
+    def line_for(key):
         line = next((l.strip() for l in layer.splitlines()
                      if l.strip().startswith(key + " ")), None)
         assert line is not None, f"{key} does not reach the model at all"
+        return line
+
+    for key in ("allowed_states", "titles"):
+        line = line_for(key)
         assert "context_ref" in line, (
             f"`{key}` renders as {line!r} — the binding form is not being taught, so "
             "the model cannot know it may bind instead of hard-coding a literal"
         )
+
+    # 🔴 `exclude_rules` is DELIBERATELY array-only, and the asymmetry is the point.
+    #
+    # Backend opened it to `context_ref` alongside `allowed_states` on the symmetry,
+    # without checking what its key RESOLVES to. `home_markets` resolves to a list;
+    # `disqualifiers` resolves to the org's free prose. `in_target_market` does
+    # `for rule in exclude_rules`, which over a string yields single CHARACTERS —
+    # 'S', 'c', 'h', 'o', 'o', 'l' — so every company whose name contains one is
+    # excluded and Gate 1 fails for everyone. A finalized skill passed all five gate
+    # checks and scored 0 of 159 leads where the live config scores 35.
+    #
+    # 🔑 The distinction is the RESOLVED TYPE, not the mechanism, which is why
+    # `allowed_states` keeps its binding above. Asserting the asymmetry rather than
+    # deleting the key is deliberate: "make these two consistent" is exactly the
+    # reasoning that caused the defect, so it should fail a test rather than look
+    # like tidying.
+    assert "context_ref" not in line_for("exclude_rules"), (
+        "`exclude_rules` is offering a binding again — `disqualifiers` resolves to "
+        "prose, and iterating a string yields characters, which fails Gate 1 for "
+        "every lead with no error"
+    )
