@@ -1303,3 +1303,37 @@ def test_a_bound_key_renders_its_BINDING_hint_not_just_its_name():
         "prose, and iterating a string yields characters, which fails Gate 1 for "
         "every lead with no error"
     )
+
+def test_no_declared_key_is_taught_as_a_bare_value():
+    """Class-level detector for the `allOf` regression, rather than one more scar.
+
+    `_type_hint` falls back to `subschema.get("type", "value")`, so a rendered hint
+    of exactly `value` means the renderer understood neither the type nor the
+    reference — the model is told a key accepts "value", which teaches nothing.
+
+    That is what `allowed_states` and `exclude_rules` rendered when backend moved
+    them to `allOf: [{$ref: ...}]`, and the suite stayed green because every
+    assertion at the time checked that the KEY was present. This asserts the absence
+    of the degraded OUTPUT instead, so it catches shapes nobody has written yet — a
+    two-element `allOf`, for instance, still degrades to `value` today and no
+    per-key test would notice.
+
+    ⚠️ `object` is NOT degraded and is deliberately allowed: it is the correct hint
+    for a container whose children `_nested_object_lines` then expands, and 20 keys
+    legitimately render it. Asserting against `object` too would fail on landing.
+    """
+    import re
+
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    layer = _section_shapes_layer(contracts.config_schema())
+    useless = [
+        m.group(1)
+        for line in layer.splitlines()
+        if (m := re.match(r"^\s*([a-z_]+)(?:\s*\(required\))?\s+—\s+value\s*$", line))
+    ]
+    assert not useless, (
+        f"these keys are taught as bare `value`, which teaches nothing: {useless}. "
+        "Either the schema declares no type, or `_type_hint` does not understand the "
+        "reference form used"
+    )
