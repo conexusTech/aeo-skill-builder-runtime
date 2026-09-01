@@ -1114,3 +1114,43 @@ def test_company_size_field_keeps_the_sentence_that_names_the_silent_failure():
         "the description no longer names `unknown`, the sibling whose midpoint makes "
         "an uncollected field look like a working band"
     )
+
+#: The gated model's three fixed numbers, and the value each must state. They are
+#: NOT structurally constrained -- each declares only `minimum: 1` -- so a config
+#: with `floor: 70` is schema-VALID and the invariant lives in prose plus backend's
+#: lint. That is why the text is worth pinning: it is the only thing in OUR half
+#: that carries the rule.
+_GATED_FIXED_NUMBERS = (("floor", "80"), ("score_cap", "100"), (("bonus", "max"), "20"))
+
+
+def test_the_three_fixed_gated_numbers_state_their_value_and_render_whole():
+    """`floor` said *"set with `score_cap` so the gap equals `bonus.max` — floor 80
+    and cap 100 leaves exactly 20 points"*. A skill authored **floor 70, bonus.max
+    30, cap 100** — which satisfies that sentence exactly, because `100 - 70 = 30`
+    and the 80 reads as an illustration. Its empty band became 46-69 while every
+    other skill's is 46-79, so a 75 means "qualified" in one vertical and
+    "impossible, therefore a bug" in another.
+
+    Third instance of one shape in this thread: a rule that is true, insufficient,
+    and followed into a defect — after `min(base + bonus, ceiling)` read as
+    "ceilings below floor", and `allowed_states_from` read as the allow-list.
+
+    Asserts the VALUE, not the wording: 80 / 100 / 20 are the contract's own numbers
+    and survive a reword. And whole at 340, because these three now sit under that
+    budget and a cut would drop the word FIXED while leaving the arithmetic that was
+    already misread once.
+    """
+    from app.skill_builder.prompt import _notes
+    from app.skill_builder.validator import _SHAPE_DESCRIPTION_BUDGET
+
+    sc = contracts.config_schema()["properties"]["scoring"]["properties"]
+    for path, value in _GATED_FIXED_NUMBERS:
+        node = sc[path[0]]["properties"][path[1]] if isinstance(path, tuple) else sc[path]
+        label = ".".join(path) if isinstance(path, tuple) else path
+        raw = " ".join(str(node["description"]).split())
+        assert value in raw, f"`{label}` no longer states its fixed value {value}"
+        assert len(raw) <= _SHAPE_DESCRIPTION_BUDGET, (
+            f"`{label}` is {len(raw)} chars against the {_SHAPE_DESCRIPTION_BUDGET}-char "
+            "shape-error budget; the FIXED marker would be cut"
+        )
+        assert _notes(node, "")[0] == raw

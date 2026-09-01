@@ -545,7 +545,7 @@
         "score_cap": {
           "type": "integer",
           "minimum": 1,
-          "description": "Upper bound on the total score after all axes and any adjustment are summed."
+          "description": "The highest possible total. ⚠️ FIXED at 100 under `model: gated`, with `floor` 80 and `bonus.max` 20. Changing it makes this skill's scores incomparable with every other skill's, which is the property the gated model exists to provide."
         },
         "ai_adjustment": {
           "type": "object",
@@ -657,7 +657,7 @@
         "floor": {
           "type": "integer",
           "minimum": 1,
-          "description": "The score a lead gets for clearing BOTH gates, before any bonus. Everything above this is earned; nothing can subtract from it. Set with `score_cap` so the gap equals `bonus.max` — floor 80 and cap 100 leaves exactly 20 points of bonus, which makes the range between the highest gated-out score and the floor structurally empty and therefore auditable: any score landing in it is a bug."
+          "description": "The score a lead gets for clearing BOTH gates, before any bonus. ⚠️ FIXED at 80, with `score_cap` 100 and `bonus.max` 20 — not a per-skill choice. 46-79 must be unreachable in EVERY skill: that is what makes a score mean the same across verticals. A lower floor stays consistent here and silently breaks that."
         },
         "bonus": {
           "type": "object",
@@ -666,7 +666,7 @@
             "max": {
               "type": "integer",
               "minimum": 1,
-              "description": "Total bonus available. Should equal `score_cap` minus `floor`, or the top of the range is unreachable."
+              "description": "Total bonus available above `floor`. ⚠️ FIXED at 20, with `floor` 80 and `score_cap` 100. The four bands must sum to exactly this. Raising it to widen the range moves the bottom of the qualified range below 80 and breaks comparability across skills."
             },
             "signal_strength": {
               "type": "object",
