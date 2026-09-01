@@ -608,7 +608,7 @@
                 },
                 "exclude_rules_from": {
                   "type": "string",
-                  "description": "Context reference to the org's disqualifiers, normally `icp_seeds.disqualifiers`. A lead matching one fails the gate even when its state is right."
+                  "description": "Documentation of where `exclude_rules` came from, normally `icp_seeds.disqualifiers`. ⚠️ NOT dereferenced — nothing in the gateway or the scanner reads it, so it cannot populate the gate. Authoring it alone means NO lead is ever excluded, which looks identical to a clean market. Write the literal `exclude_rules` too."
                 },
                 "allowed_states": {
                   "type": "array",
@@ -616,6 +616,13 @@
                     "type": "string"
                   },
                   "description": "⚠️ REQUIRED under `model: gated` — the ONLY key gate 1 reads. Two-letter codes, e.g. `[\"MI\", \"IN\"]`. Derive them from the org's home markets and write the RESULT here: a market often reads `\"Grand Rapids MI\"`, so the state must be extracted first. An empty or absent list admits NOBODY and caps the whole book."
+                },
+                "exclude_rules": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Substrings that DISQUALIFY a lead at gate 1, matched case-insensitively against company name, industry and description — e.g. `[\"franchise\", \"staffing agency\"]`. ⚠️ Only this literal is read; `exclude_rules_from` cannot populate it. Omit it entirely when the org declares no disqualifiers."
                 }
               }
             },
@@ -625,7 +632,7 @@
               "properties": {
                 "stage_field": {
                   "type": "string",
-                  "description": "The prospect field holding the pipeline stage."
+                  "description": "⚠️ NOT read by the scanner — the pipeline stage is passed to the gate by the caller, so naming a field here has no effect and cannot redirect it. Left declared only so an existing config keeps validating. Leave it absent."
                 },
                 "window_stages": {
                   "type": "array",
@@ -636,7 +643,7 @@
                 },
                 "signal_date_path": {
                   "type": "string",
-                  "description": "Where the dated signals live, e.g. `validation_data.switching_signal[].signal_date`."
+                  "description": "⚠️ NOT read by the scanner. The dated signals come from `scoring.signal_source` — the validation lane's `key`, defaulting to `switching_signal` — and the gate reads `signal_date` on each row of that lane. A path authored here is ignored. Leave it absent."
                 },
                 "signal_freshness_months": {
                   "type": "integer",

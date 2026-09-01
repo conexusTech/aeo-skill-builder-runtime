@@ -1041,3 +1041,37 @@ def test_the_literal_allow_list_the_gate_reads_is_declared_and_renders_whole():
 
     # and it must actually reach the model, which is what half A made possible
     assert "allowed_states" in _section_shapes_layer(contracts.config_schema())
+
+#: The gate keys the model must be able to author, and that a re-pin must not
+#: un-declare. Each earned its place by being MISSING and producing a silent
+#: defect, so this list is a scar record rather than a schema summary.
+_GATE_KEYS_THE_MODEL_MUST_BE_ABLE_TO_AUTHOR = (
+    ("target_market", "allowed_states"),   # absent -> every lead fails G1, book caps
+    ("target_market", "exclude_rules"),    # absent -> org disqualifiers never applied
+)
+
+
+def test_every_gate_key_the_engine_reads_is_declared_and_reaches_the_model():
+    """Generalises the `allowed_states` pin instead of adding one test per scar.
+
+    Backend applied our correction — *an undeclared key is not one the model omits,
+    it is one it cannot write* — as a PREDICATE (`gate-key-parity.py`, declared vs
+    read per gate sub-object) and it immediately returned the same defect one
+    property over: `exclude_rules` was read at `gated_score.py:117` and undeclared,
+    while `exclude_rules_from` was declared and dereferenced by nothing. A session
+    authored three keys that do nothing and could not author the one that works.
+
+    So the assertion is per-key rather than per-incident: declared, and reaching the
+    composed layer. A key that is declared but not rendered is the same defect with
+    an extra step, which is why both halves are checked.
+    """
+    from app.skill_builder.prompt import _section_shapes_layer
+
+    schema = contracts.config_schema()
+    gate = schema["properties"]["scoring"]["properties"]["gate"]["properties"]
+    rendered = _section_shapes_layer(schema)
+    for parent, key in _GATE_KEYS_THE_MODEL_MUST_BE_ABLE_TO_AUTHOR:
+        assert key in gate[parent]["properties"], (
+            f"gate.{parent}.{key} is not declared — the model cannot author it"
+        )
+        assert key in rendered, f"gate.{parent}.{key} is declared but never reaches the model"
