@@ -1214,3 +1214,36 @@ def test_the_buying_window_defaults_name_their_value_not_just_their_semantics():
         raw = " ".join(str(bw[key]["description"]).split())
         assert len(raw) <= _SHAPE_DESCRIPTION_BUDGET, f"`{key}` is {len(raw)} chars"
         assert _notes(bw[key], "")[0] == raw
+
+def test_priority_bands_carries_both_of_its_rules_at_the_tighter_budget():
+    """`priority_bands` was 408 chars and losing its NO-GAPS rule by eight
+    characters at 400 — while one of backend's live-config tests pinned that same
+    rule separately, so the test passed while the sentence never reached the model.
+
+    🔑 That is the vacuous-assertion shape again, from the other side: **a
+    description already over budget is invisible to a pin that only watches for the
+    truncated set to GROW.** It is the same class as the `company_size.field`
+    assertion I shipped and mutation caught.
+
+    The rewrite also fixes a defect that was arithmetic, not style. A config shipped
+    `16-30 "Active Signal, Outside Territory"`, which labelled **92 in-territory
+    prospects "Outside Territory"** on a customer-facing list, crediting them with a
+    signal they did not have. `priority_band(score, bands)` is a numeric lookup with
+    no access to the lane, and the lanes are not separable by score anyway —
+    `signal_only` spans 10-30 and `target_market_only` 25-45, so a target-market lead
+    with a small bonus lands *inside the band named for the other lane*. **No ladder
+    can distinguish them, so no label should try.**
+
+    Pinned at 340 rather than 400 because that is the budget the no-gaps rule was
+    already failing, and both rules now have to survive it.
+    """
+    from app.skill_builder.prompt import _notes
+    from app.skill_builder.validator import _SHAPE_DESCRIPTION_BUDGET
+
+    node = contracts.config_schema()["properties"]["scoring"]["properties"]["priority_bands"]
+    raw = " ".join(str(node["description"]).split())
+    assert len(raw) <= _SHAPE_DESCRIPTION_BUDGET, (
+        f"`priority_bands` is {len(raw)} chars against the {_SHAPE_DESCRIPTION_BUDGET}-char "
+        "shape-error budget — one of its two rules is being cut"
+    )
+    assert _notes(node, "")[0] == raw

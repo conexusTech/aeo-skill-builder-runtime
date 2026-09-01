@@ -500,7 +500,7 @@
         },
         "priority_bands": {
           "type": "array",
-          "description": "What a score MEANS. Give contiguous ranges covering 0 to `score_cap` with no gaps: a score that falls in a gap has no verdict at all, which is invisible until the one prospect that lands there renders blank. A number ranks prospects; a band tells an operator what to do about one — and without bands every consumer invents its own thresholds, so the same score reads as two different verdicts on two screens.",
+          "description": "What a score MEANS. Give contiguous ranges covering 0 to `score_cap` with no gaps — a score landing in a gap gets no verdict and renders blank. ⚠️ Label the RANGE or the ACTION, never which gate a lead failed: this is a numeric lookup blind to the lane, and lanes overlap (25-30 is both signal_only and target_market_only).",
           "items": {
             "type": "object",
             "required": [
