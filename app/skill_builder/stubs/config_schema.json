@@ -678,7 +678,8 @@
                   "description": "Points this band can award."
                 },
                 "field": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "⚠️ NOT read — the engine keys on `signal_class`, which it derives from each signal's `signal_type`. What this band needs is that the lane named by `scoring.signal_source` collects `signal_type`; without it every signal is unclassifiable and scores the midpoint. Leave this absent."
                 },
                 "classes": {
                   "type": "object",
@@ -707,7 +708,7 @@
                 },
                 "field": {
                   "type": "string",
-                  "description": "Where headcount is read from. Defaults to `employee_count`."
+                  "description": "Where headcount is read from, defaulting to `employee_count`. ⚠️ It must be collected by a `discovery.sources.*.fields` list — lead values come from there. If nothing collects it, every prospect scores `unknown` and the tiers separate nobody, which still looks like a working band. Collect it, or drop the band."
                 },
                 "tiers": {
                   "type": "array",
@@ -752,7 +753,8 @@
                   "description": "Points this band can award."
                 },
                 "field": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "⚠️ NOT read — the engine takes `signal_date` off each signal row directly. What this band actually needs is that the lane named by `scoring.signal_source` collects `signal_date`; without it every signal is undated and the band scores 0 for everyone. Leave this absent."
                 },
                 "months": {
                   "type": "array",

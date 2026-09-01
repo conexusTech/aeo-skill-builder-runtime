@@ -1075,3 +1075,42 @@ def test_every_gate_key_the_engine_reads_is_declared_and_reaches_the_model():
             f"gate.{parent}.{key} is not declared — the model cannot author it"
         )
         assert key in rendered, f"gate.{parent}.{key} is declared but never reaches the model"
+
+def test_company_size_field_keeps_the_sentence_that_names_the_silent_failure():
+    """`bonus.company_size.field` is the only one of the three band `field` keys the
+    engine actually READS — `band_company_size` takes it off the lead, while
+    `band_recency` and `band_signal_strength` hardcode `sig.signal_date` and
+    `sig.signal_class`.
+
+    So this is the one whose misuse is silent and costly. A skill declared four
+    tiers over `employee_count` while its discovery sources collected only
+    `company_name, website, location, industry, products_services`. **`unknown: 2`
+    is what hides it**: the band degrades to a flat midpoint rather than a zero, so
+    a 10-person shop and a 500-person manufacturer score identically and nothing
+    looks broken.
+
+    Backend trimmed this description 346 -> 311 when their budget check — the one
+    that now tests both of our budgets, after we reported the 340 — caught it six
+    characters over. Six characters would have dropped the last sentence, which is
+    the one carrying the warning. Pinned at 340 for that reason, not at 400.
+    """
+    from app.skill_builder.prompt import _notes
+    from app.skill_builder.validator import _SHAPE_DESCRIPTION_BUDGET
+
+    node = (contracts.config_schema()["properties"]["scoring"]["properties"]
+            ["bonus"]["properties"]["company_size"]["properties"]["field"])
+    raw = " ".join(str(node["description"]).split())
+    assert len(raw) <= _SHAPE_DESCRIPTION_BUDGET, (
+        f"{len(raw)} chars against the {_SHAPE_DESCRIPTION_BUDGET}-char shape-error budget"
+    )
+    assert _notes(node, "")[0] == raw
+
+    # A budget assertion ALONE is vacuous here, and mutation proved it: the previous
+    # 60-char description also rendered whole, so "renders whole" passed against the
+    # very state this test exists to prevent. `unknown` is the sibling key whose
+    # midpoint hides the failure, so naming it is the contract token that
+    # distinguishes a description that warns from one that merely fits.
+    assert "unknown" in raw, (
+        "the description no longer names `unknown`, the sibling whose midpoint makes "
+        "an uncollected field look like a working band"
+    )
