@@ -1337,3 +1337,45 @@ def test_no_declared_key_is_taught_as_a_bare_value():
         "Either the schema declares no type, or `_type_hint` does not understand the "
         "reference form used"
     )
+
+def test_signal_source_offers_a_value_every_vertical_can_actually_use():
+    """The DEFAULT was the defect, which is why no lint could reach it.
+
+    `signal_source` described itself as naming a validation LANE, defaulting to
+    `switching_signal`. For a vertical whose dated signals land in the core
+    qualification verdict rather than a dedicated lane there was **no legal answer**:
+    keep the default, it points at a lane that does not exist, gate 2 fails for every
+    lead, and the run completes with no error. Three of the four live skills sit
+    there — consulting, flooring and advertising all carry theirs under
+    `signals_found` — and the scanner's `RESERVED_LANE_KEYS` FORBIDS a lane named
+    `signals_found`, because it would overwrite the verdict it depends on. So
+    "declare a lane with that key" was never advice anyone could follow.
+
+    🔑 A lint cannot close this class. The failure comes from what you get by saying
+    NOTHING, and nothing downstream sees an authoring decision that was never made.
+    Only the authoring surface prevents it — which is why it is a schema edit and
+    therefore our pin.
+
+    Pinned at 340 with the CLAUSE checked, not just the length: the `priority_bands`
+    lesson was that a field can sit inside a budget while the sentence that matters
+    falls outside a truncation boundary, so `signals_found` is asserted to survive
+    the cut rather than merely to be present in the source.
+    """
+    from app.skill_builder.prompt import _notes
+    from app.skill_builder.validator import _SHAPE_DESCRIPTION_BUDGET
+
+    node = contracts.config_schema()["properties"]["scoring"]["properties"]["signal_source"]
+    raw = " ".join(str(node["description"]).split())
+
+    cut = raw.rfind(". ", 0, _SHAPE_DESCRIPTION_BUDGET)
+    kept = raw if len(raw) <= _SHAPE_DESCRIPTION_BUDGET else raw[: (cut + 1 if cut > 0 else _SHAPE_DESCRIPTION_BUDGET)]
+
+    assert "signals_found" in raw, (
+        "`signal_source` no longer names `signals_found`, so a vertical whose dated "
+        "signals live in the core verdict has no legal value again"
+    )
+    assert "signals_found" in kept, (
+        "`signals_found` is present in the source but falls outside the 340-char "
+        "truncation boundary, so it never reaches a failing author"
+    )
+    assert _notes(node, "")[0] == raw
