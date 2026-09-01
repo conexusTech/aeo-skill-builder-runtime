@@ -657,7 +657,8 @@
         "floor": {
           "type": "integer",
           "minimum": 1,
-          "description": "The score a lead gets for clearing BOTH gates, before any bonus. ⚠️ FIXED at 80, with `score_cap` 100 and `bonus.max` 20 — not a per-skill choice. 46-79 must be unreachable in EVERY skill: that is what makes a score mean the same across verticals. A lower floor stays consistent here and silently breaks that."
+          "description": "The score a lead gets for clearing BOTH gates, before any bonus. ⚠️ FIXED at 80, with `score_cap` 100 and `bonus.max` 20 — not a per-skill choice. 46-79 must be unreachable in EVERY skill: that is what makes a score mean the same across verticals. A lower floor stays consistent here and silently breaks that.",
+          "const": 80
         },
         "bonus": {
           "type": "object",
@@ -666,7 +667,8 @@
             "max": {
               "type": "integer",
               "minimum": 1,
-              "description": "Total bonus available above `floor`. ⚠️ FIXED at 20, with `floor` 80 and `score_cap` 100. The four bands must sum to exactly this. Raising it to widen the range moves the bottom of the qualified range below 80 and breaks comparability across skills."
+              "description": "Total bonus available above `floor`. ⚠️ FIXED at 20, with `floor` 80 and `score_cap` 100. The four bands must sum to exactly this. Raising it to widen the range moves the bottom of the qualified range below 80 and breaks comparability across skills.",
+              "const": 20
             },
             "signal_strength": {
               "type": "object",
@@ -821,14 +823,6 @@
         "signal_source": {
           "type": "string",
           "description": "Which validation lane carries the dated buying signal the gate reads. Defaults to `switching_signal`. Set it when your dated lane has a different `key` — pointing at a lane that does not exist fails the buying-window gate for every lead, and the run completes with no error."
-        },
-        "priority_band_source": {
-          "type": "string",
-          "enum": [
-            "range",
-            "lane"
-          ],
-          "description": "⚠️ NOT read by the scanner today — it implements only the `range` path, so `lane` is authored, validated and then silently ignored, and the unread-key gate refuses the config. Leave this absent and author numeric ranges in `priority_bands`, which is what every consumer reads for colour and sort order."
         }
       },
       "$comment": "Declared 2026-08-12 (thread #32), and every property was read off the engine's actual read sites rather than transcribed from the thread: `factors` + min/max at av_lead_scanner.py score_config_factors/_factor_credit, `score_cap`/`ai_adjustment` at :1290-1291, `disqualify_below` at :1365, the five axis `max` values at _DEFAULT_SCORING. WHY THIS EXISTS: `scoring` previously declared nothing, so each knob the engine consumed was invisible to every other repo — aeo-agent-service's drift test compares published files and there was no file difference to detect, which is how the engine's vocabulary went stale in their layer inside four hours. TWO DEVIATIONS FROM THE PROPOSED FRAGMENT, both deliberate: (1) `disqualify_below` was NOT in the proposal and the engine does read it — the same undercount class the thread exists to close, found by checking instead of trusting. (2) `required: [name, weight]` and `exclusiveMinimum: 0` are a TIGHTENING, not the 'pure relaxation' the proposal claimed: the engine defaults a missing weight to 1 and silently SKIPS weight<=0, so both cases are legal today and become errors here. Kept because an implicit weight of 1 beside an explicit 25 is near-certainly not what the operator meant, and a skipped factor is invisible — but it is a behaviour change, argued rather than smuggled. Safe as a non-bump because `factors` is new: no shipped config declares it. The vertical-shaped internals (fit.keyword_scores, pipeline.statuses/phase_fallback, region_bonus.regions/state_aliases, multi_source.tiers, completeness.fields) are deliberately NOT declared — the PO ruled they must go, and completeness.fields is now derived from the config's own sources when unset, so declaring it would invite a model to author what the runtime computes better. KNOWN GAP, evidenced not theorised: a factor cannot express RECENCY. On run b29b3416 a 2023 permit earned the same full credit as one from last month, and min/max cannot fix it because the bound reads the first number in the value — a date yields its year, and the collected formats varied enough ('August 2026', '02/14/2024', '2026-07-30') that any threshold would compare against 2026, 2 and 2026. Do not add a date bound to this shape without a real date parser."

@@ -1115,11 +1115,19 @@ def test_company_size_field_keeps_the_sentence_that_names_the_silent_failure():
         "an uncollected field look like a working band"
     )
 
-#: The gated model's three fixed numbers, and the value each must state. They are
-#: NOT structurally constrained -- each declares only `minimum: 1` -- so a config
-#: with `floor: 70` is schema-VALID and the invariant lives in prose plus backend's
-#: lint. That is why the text is worth pinning: it is the only thing in OUR half
-#: that carries the rule.
+#: The gated model's three fixed numbers, and the value each must state.
+#:
+#: 🔴 UPDATED 2026-09-01. Two of the three are now `const` in the schema
+#: (`floor: 80`, `bonus.max: 20`), so a `floor: 70` config is structurally INVALID
+#: rather than merely discouraged. Backend added them after we pointed out that all
+#: three carried `minimum: 1` and nothing else, so every version of the invariant
+#: had lived in prose plus a lint that runs after the fact.
+#:
+#: `score_cap` deliberately stayed prose-only: **20 legacy configs declare it**, and
+#: a `const` would forbid a legacy skill from ever choosing another cap — a
+#: narrowing the change had no mandate for. `floor` and `bonus.max` are gated-only
+#: in every config that exists, which is what made those two safe.
+_GATED_CONST_NUMBERS = (("floor",), ("bonus", "max"))
 _GATED_FIXED_NUMBERS = (("floor", "80"), ("score_cap", "100"), (("bonus", "max"), "20"))
 
 
@@ -1144,6 +1152,18 @@ def test_the_three_fixed_gated_numbers_state_their_value_and_render_whole():
     from app.skill_builder.validator import _SHAPE_DESCRIPTION_BUDGET
 
     sc = contracts.config_schema()["properties"]["scoring"]["properties"]
+
+    # The structural half: prose is now the SECOND line of defence, not the only one.
+    # A re-pin that dropped a `const` would leave every prose assertion below still
+    # passing, which is precisely the shape of defect this thread kept finding.
+    for path in _GATED_CONST_NUMBERS:
+        node = sc[path[0]]["properties"][path[1]] if len(path) == 2 else sc[path[0]]
+        label = ".".join(path)
+        assert "const" in node, (
+            f"`{label}` lost its `const` — the invariant is back to prose only, and a "
+            "config violating it would validate"
+        )
+
     for path, value in _GATED_FIXED_NUMBERS:
         node = sc[path[0]]["properties"][path[1]] if isinstance(path, tuple) else sc[path]
         label = ".".join(path) if isinstance(path, tuple) else path
