@@ -1174,3 +1174,43 @@ def test_the_three_fixed_gated_numbers_state_their_value_and_render_whole():
             "shape-error budget; the FIXED marker would be cut"
         )
         assert _notes(node, "")[0] == raw
+
+def test_the_buying_window_defaults_name_their_value_not_just_their_semantics():
+    """A description can be complete about MEANING and silent about VALUE, and the
+    silence is what the model acts on.
+
+    `signal_freshness_months` described the comparison correctly and never named a
+    number: *"compared STRICTLY"*, *"deliberately stricter"*, *"strict about
+    admitting"* — three uses of the word, no value, while the engine's own fallback
+    is 18 and the live skill uses 18. Two unrelated verticals then authored
+    IDENTICAL parameters — 3-of-5 stages, 6 months — which is the signature of
+    schema-driven authoring rather than data-driven. Scored against a real 159-lead
+    book it qualified **5** leads where the live config qualifies **35**.
+
+    🔑 And the decomposition matters more than the total, because it is
+    counter-intuitive: `window_stages` is the dominant term. Dropping the two
+    earliest stages cost **23 of the 30 lost leads (77%)**; the 3x narrower window
+    cost the other 7. The gate's real filter is the fresh signal, so most qualified
+    leads sit in EARLY stages carrying recent signals — exactly the ones an "active
+    buying window" reading excludes.
+
+    ⚠️ Distinct from the six failures before it, and `const` cannot fix it: 6 months
+    is legitimate for an org that states it. Only naming the default and pricing the
+    deviation can. So the pin is that the default is NAMED — 18 is the engine's
+    fallback, a contract value, not backend's phrasing.
+    """
+    from app.skill_builder.prompt import _notes
+    from app.skill_builder.validator import _SHAPE_DESCRIPTION_BUDGET
+
+    bw = (contracts.config_schema()["properties"]["scoring"]["properties"]
+          ["gate"]["properties"]["buying_window"]["properties"])
+
+    freshness = " ".join(str(bw["signal_freshness_months"]["description"]).split())
+    assert "18" in freshness, (
+        "`signal_freshness_months` no longer names 18, the engine's fallback — a "
+        "description that is all semantics and no value steers the model small"
+    )
+    for key in ("signal_freshness_months", "window_stages"):
+        raw = " ".join(str(bw[key]["description"]).split())
+        assert len(raw) <= _SHAPE_DESCRIPTION_BUDGET, f"`{key}` is {len(raw)} chars"
+        assert _notes(bw[key], "")[0] == raw

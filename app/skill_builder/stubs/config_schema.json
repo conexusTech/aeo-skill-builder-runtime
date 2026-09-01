@@ -639,7 +639,7 @@
                   "items": {
                     "type": "string"
                   },
-                  "description": "The stage names that count as an active buying window. Must be exact keys from this skill's own `pipeline.stages` vocabulary — a name that is not a real rung can never match, so the gate closes for everyone."
+                  "description": "Stage names that do NOT rule a lead out — normally EVERY stage in `pipeline.stages`, earliest included. The fresh signal decides in-market; this list only excludes rungs where a deal is already lost. ⚠️ Measured: dropping the two earliest cost 23 of 35 qualified leads on a real book."
                 },
                 "signal_date_path": {
                   "type": "string",
@@ -648,7 +648,7 @@
                 "signal_freshness_months": {
                   "type": "integer",
                   "minimum": 1,
-                  "description": "How recent a signal must be to count as in-market. Compared STRICTLY (younger than, not equal to), so a signal exactly this many months old does not qualify. Deliberately stricter than the recency bonus below, which awards inclusively: strict about admitting, generous about crediting a lead already admitted."
+                  "description": "How recent a signal must be to count as in-market. ⚠️ Use 18 unless the org states its own window — 18 is the engine's fallback and what the live skill uses. A shorter window is not a safer default; it just qualifies fewer leads. Compared strictly: younger than, not equal to."
                 }
               }
             }
