@@ -1,7 +1,8 @@
 # Skill Builder Agent (Bedrock AgentCore AGUI runtime)
 
-A **third product surface** for `aeo-agent-service`, architecturally distinct
-from the Redis-worker app in `app/main.py`. It is a conversational config-author:
+**Its own repo since 2026-08-07** — this was a third product surface inside
+`aeo-agent-service` until the split, and the wording below still reads from that
+vantage point in places. It is a conversational config-author:
 a streaming AG-UI chat that turns an org's onboarding context into a
 prospect-scanning **skill config document**, iterating with a human per phase
 until each section is accepted.
@@ -40,16 +41,20 @@ lazily imported in `model.py`). Not required to import the package or run tests.
 | `model.py` | The `ChatModel` seam — `FakeChatModel` (tests) + `BedrockChatModel` (Sonnet 5, Opus 4.8 lever). |
 | `runtime.py` | Stateless turn handler tying it together; never crashes (→ in-stream `RUN_ERROR`). |
 | `server.py` | The AgentCore AGUI ASGI entry — `POST /invocations` + `GET /ping`. |
-| `stubs/` + `contracts.py` | Pinned copies of the three gateway-owned contracts + the single `SKILL_BUILDER_*_PATH` swap point. |
+| `org_coupling.py` | The R12 org-coupling lint, mirroring the gateway's `org-coupling.lint.ts` — a second implementation on purpose, because schema cannot express "a literal here is legal only when a sibling `context_ref` explains it". |
+| `authoring_placeholders.py` | The unfilled-authoring lint, mirroring `authoring-placeholders.lint.ts` — catches bracket placeholders and an inline `{context_ref:...}` written into a string, both of which passed every gate either side had. |
+| `stubs/` + `contracts.py` | Pinned copies of the **five** gateway-owned contracts + the `SKILL_BUILDER_*_PATH` swap points (one per contract). |
 
 ## Contracts (PRD §14) — RATIFIED v1, 2026-08-03
 
-All three gateway-owned contracts are **published and ratified**, and the files in
-`stubs/` are **pinned verbatim copies** of them (they were hand-written guesses
-before). Overriding via `SKILL_BUILDER_CONFIG_SCHEMA_PATH` /
-`_CONTEXT_FIELD_KEYS_PATH` / `_TOOL_SCHEMAS_PATH` still works and needs no code
-change. ⚠️ Because the copies are pinned, a `version` bump on the gateway side has
-to be communicated — they cannot self-update.
+All **five** gateway-owned contracts are **published and ratified**, and the files
+in `stubs/` are **pinned verbatim copies** of them (they were hand-written guesses
+before): `config_schema.json`, `context_field_keys.json`, `tool_schemas.json`,
+`agui_state_envelope.json`, `agui_run_finished.json`. Overriding via the matching
+`SKILL_BUILDER_*_PATH` env var still works and needs no code change. ⚠️ Because the
+copies are pinned, a change on the gateway side has to be communicated — they
+cannot self-update. `tests/test_skill_builder_contracts.py` is what catches drift,
+and `../../CLAUDE.md`-adjacent `CLAUDE.md` in this repo carries the re-pin loop.
 
 Confirmed against the ratified contract: what `runtime._kickoff` emits validates
 with **zero issues** incrementally, and a fully-decided config with zero in both
@@ -78,8 +83,9 @@ Shapes pinned with the gateway and frontend rather than guessed:
   read one vocabulary — `vertical`, `lead_type` (`A`/`B`/`MIXED`) and `skill_type`
   (`skills.type`: `customer`/`project`).
 
-**We still owe the gateway the runtime ARN + qualifier** — the one thing gating R2
-and therefore the whole chat loop.
+✅ **The runtime ARN was delivered and the runtime is live** — R2 is unblocked. See
+`CLAUDE.md` in this repo for the deployed version, and read it from
+`provision.py --check` rather than from any markdown file.
 
 ## Model choice (Q6)
 
@@ -96,5 +102,11 @@ expressible in the standard phase vocabulary.
 ## Testing
 
 Fully testable against a mocked stream with no AWS/model dependency: tests
-assert over `AGUIEmitter.events` and inject `FakeChatModel`. `poetry run pytest
-tests/test_skill_builder_*.py`.
+assert over `AGUIEmitter.events` and inject `FakeChatModel`.
+
+```bash
+.venv/Scripts/python -m pytest tests/ -q
+```
+
+⚠️ **Not `poetry run pytest`** — that was the old service's toolchain. This repo is
+venv + pip (`requirements.txt`).

@@ -11,6 +11,13 @@ which is also the prompt-injection backstop.
 Stateless per turn — state is reconstructed from the gateway's snapshots on every
 invocation. `skill_builder_sessions` (gateway-owned) is the only durable truth.
 
+## Ownership
+
+**We own this end to end — development, the runtime, and deployment to Bedrock AgentCore**
+(standing instruction from Leo, 2026-09-02). It is not another team's and it is not blocked
+on AWS access. See [CLAUDE.md](CLAUDE.md) for the self-serve boundary and the three things
+that still need an administrator.
+
 ## Why this repo exists
 
 Split out of `aeo-agent-service` on 2026-08-07, mirroring how
@@ -30,7 +37,7 @@ docstring for what was deliberately left behind.
 | `app/skill_builder/server.py` | the ASGI app: `POST /invocations`, `GET /ping` |
 | `app/skill_builder/runtime.py` | `handle_turn` — never crashes; failures become in-stream `RUN_ERROR` |
 | `app/skill_builder/protocol/agui.py` | the one owned AG-UI module: events, emitter, SSE encoding |
-| `app/skill_builder/stubs/` | the **five pinned contracts**, verbatim copies of the gateway's ratified files |
+| `app/skill_builder/stubs/` | the **five pinned contracts**, verbatim copies of the gateway's ratified files — `config_schema`, `context_field_keys`, `tool_schemas`, `agui_state_envelope`, `agui_run_finished` |
 | `scripts/provision.py` | idempotent deploy — create or update in place, same ARN |
 | `docs/admin-request-skillbuilder-role.md` | the one thing we cannot self-serve |
 
@@ -42,7 +49,7 @@ the internals.
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements.txt pytest
-.venv/Scripts/python -m pytest tests/ -q          # 164 tests, no AWS needed
+.venv/Scripts/python -m pytest tests/ -q          # 299 tests, no AWS needed
 ```
 
 Nothing in the suite touches AWS or a network: the model is injected as a FastAPI
@@ -84,16 +91,19 @@ reading in full before touching AWS here.
 
 ## Status
 
-Verified against AWS on 2026-08-21, not transcribed.
+Verified against AWS on 2026-09-02, not transcribed.
 
 | | |
 |---|---|
-| Code | ✅ 267 tests pass |
+| Code | ✅ 299 tests pass |
 | ECR repository | ✅ `aeo-groundtruth/skill-builder` (see the namespace note in `provision.py`) |
 | Execution role | ✅ `AmazonBedrockAgentCoreAEOSkillBuilderRole` |
 | Runtime / ARN | ✅ `arn:aws:bedrock-agentcore:us-east-1:082585646836:runtime/aeo_skill_builder-MQ0z2m8tqB` |
-| Deployed | ✅ **v24**, `READY` — `SKILL_BUILDER_BUILD_VERSION=6245f21@83f83571f632` |
+| Deployed | ✅ **v33**, `READY` — `SKILL_BUILDER_BUILD_VERSION=d4a969b@2fb2b5c343bd` |
 | Bedrock model access | ✅ established — model-backed turns run (`anthropic.claude-sonnet-5`) |
+
+This block sat at **v24** while v33 was live, which is the same failure it warns about
+below — nine versions of drift in a table nobody re-verified.
 
 ⚠️ **This table was wrong for longer than it was right, and it cost a real detour.** It
 carried "role blocked / runtime not created" through v23 being live, so a reader
